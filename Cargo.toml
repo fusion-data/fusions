@@ -334,8 +334,8 @@ opendal = { version = "0.57", features = [
 # -- request signing (Apache opendal-reqsign — Aliyun ACS3 / AWS SigV4 等云厂商签名 trait)
 reqsign-core = { version = "3.0.0" }
 # -- LLM
-rig = { package = "rig-core", version = "0.39", features = ["derive"] }
-rig-postgres = { version = "0.2" }
+rig = { version = "0.39", features = ["derive"] }
+rig-postgres = { version = "0.39" }
 rmcp = { version = "2.1", features = [
   "client",
   "reqwest",
