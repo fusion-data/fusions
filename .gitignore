@@ -1,7 +1,7 @@
 target/
+Cargo.lock
 *.rs.bk
 .DS_Store
 
 # Local runtime configs copied from examples.
 **/resources/app.toml
-

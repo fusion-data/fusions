@@ -68,5 +68,4 @@ sqlx = { workspace = true, features = [
   "postgres",
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-fastembed = "5.2"
 clap = { workspace = true }
