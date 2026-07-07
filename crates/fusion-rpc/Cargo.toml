@@ -1,0 +1,34 @@
+[package]
+name = "fusion-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = true
+
+[lints.rust]
+unsafe_code = "allow"
+
+[features]
+default = []
+opentelemetry = []
+
+[dependencies]
+fusion-common = { workspace = true }
+fusion-core = { workspace = true }
+uuid = { workspace = true }
+http = { workspace = true }
+futures = { workspace = true }
+config = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+tower = { workspace = true }
+connectrpc = { workspace = true, features = ["axum", "client"] }         # "client": Http2Connection / lazy_with_connector
+hyper-util = { workspace = true, features = ["client-legacy", "tokio"] } # HttpConnector + TokioIo
+buffa = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true }

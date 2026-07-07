@@ -1,0 +1,19 @@
+[package]
+name = "hetuflow-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "hetuflow workflow framework — pure graph validation & advance decisions"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+hetuflow-core = { workspace = true }
+# Phase E DAG：CEL guard 评估（A4 首选 CEL，pure-Rust）
+cel = { workspace = true }
+serde_json.workspace = true
+chrono.workspace = true

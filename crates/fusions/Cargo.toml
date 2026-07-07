@@ -1,0 +1,146 @@
+[package]
+name = "fusions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[features]
+# ==================== 默认 features ====================
+# 基础功能：UUID
+default = ["common-default"]
+
+# 基础依赖
+common-default = ["fusion-common/with-uuid"]
+
+# ==================== 功能模块 ====================
+
+# Web 框架 (Axum)
+web = ["dep:fusion-web", "dep:axum", "common-web"]
+common-web = ["fusion-common/with-openapi", "fusion-web/with-openapi"]
+
+# 数据库 (PostgreSQL + fusionsql)
+db = [
+  "dep:fusion-db",
+  "dep:sqlx",
+  "dep:fusionsql",
+  "sqlx/postgres",
+  "fusion-db/with-postgres",
+  "fusionsql/with-postgres",
+  "fusionsql/with-uuid",
+  "fusion-common/with-db",
+]
+# SQLite 支持
+db-sqlite = [
+  "dep:sqlx",
+  "dep:fusionsql",
+  "sqlx/sqlite",
+  "fusionsql/with-sqlite",
+  "fusion-common/with-db",
+]
+
+# 业务侧若需要 ConnectError ↔ DataError 转换，开启 rpc feature 即可（无需独立 with-connect）。
+
+# 安全认证 (JWT)
+security = ["dep:fusion-security", "fusion-security/with-jwt"]
+
+# OAuth2 支持
+oauth = ["security", "fusion-security/with-oauth"]
+
+# 阿里云 ACS3-HMAC-SHA256 请求签名（基于 opendal-reqsign trait 抽象）
+aliyun-acs3 = ["security", "fusion-security/with-aliyun-acs3"]
+
+# AI 模块
+ai = ["dep:fusion-ai", "common-ai"]
+common-ai = ["fusion-common/with-ulid"]
+
+# ConnectRPC 支持
+rpc = ["dep:fusion-rpc", "dep:connectrpc"]
+
+# ULID 支持
+ulid = ["dep:ulid", "utoipa/ulid", "fusion-common/with-ulid"]
+
+# ==================== 可选功能 ====================
+
+# OpenAPI 文档生成
+openapi = [
+  "dep:utoipa",
+  "fusion-common/with-openapi",
+  "fusion-core/with-openapi",
+]
+
+# 日志框架 (logforth)
+logforth = ["dep:logforth", "fusion-core/with-logforth"]
+
+# 分布式追踪 (tracing)
+tracing = ["fusion-core/with-tracing"]
+
+# ==================== 便捷组合 ====================
+
+# 完整功能
+full = ["web", "db", "security", "ai", "rpc"]
+
+# Web API (不含 AI)
+api = ["web", "db", "security"]
+
+# Web 服务
+web-server = ["web", "db"]
+
+# 微服务
+microservice = ["web", "db", "security", "rpc"]
+
+[dependencies]
+fusion-common = { workspace = true }
+fusion-core = { workspace = true }
+fusion-core-macros = { workspace = true }
+# -- security
+fusion-security = { workspace = true, optional = true }
+# -- db & fusionsql
+fusionsql-core = { workspace = true, optional = true }
+fusionsql = { workspace = true, optional = true }
+fusion-db = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+# -- web & axum
+axum = { workspace = true, optional = true }
+fusion-web = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+# -- connectrpc
+fusion-rpc = { workspace = true, optional = true }
+connectrpc = { workspace = true, optional = true }
+# -- ai
+fusion-ai = { workspace = true, optional = true }
+# -- DataError 转换所需的运行期依赖（不再 feature gate）
+tokio = { workspace = true }
+mea = { workspace = true }
+config = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+# -- misc
+ulid = { workspace = true, optional = true }
+rig = { workspace = true }
+rmcp = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+serde = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+log = { workspace = true }
+regex = { workspace = true }
+anyhow = { workspace = true }
+inventory = { version = "0.3" }
+logforth = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+serde_json = { workspace = true }
+dotenvy = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

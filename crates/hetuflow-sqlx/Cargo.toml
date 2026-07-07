@@ -1,0 +1,25 @@
+[package]
+name = "hetuflow-sqlx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "hetuflow workflow framework — Postgres storage (caller-provided DbxPostgres txn)"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+hetuflow-core = { workspace = true }
+# A1（§5.4 修订 2026-05-22）：DbxPostgres 把 sqlx txn 封在 Arc<Mutex>，取不出 raw
+# &mut PgConnection；要满足「caller 持有 GUC 注入事务、hetuflow-sqlx 只在其上跑 SQL」，
+# 只能接 &DbxPostgres → 依赖 fusionsql。
+fusionsql = { workspace = true }
+# 显式开 uuid（workspace sqlx 默认仅 runtime-tokio/chrono/json；独立编译需 uuid 让
+# Uuid 实现 Type<Postgres> + PgHasArrayType，支持 .bind(Uuid) 与 = ANY($vec)）。
+sqlx = { workspace = true, features = ["uuid"] }
+chrono.workspace = true
+uuid = { workspace = true }
+serde_json.workspace = true

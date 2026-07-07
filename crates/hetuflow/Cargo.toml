@@ -1,0 +1,24 @@
+[package]
+name = "hetuflow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "hetuflow workflow framework — aggregate crate (feature-gated re-export)"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+hetuflow-core = { workspace = true, optional = true }
+hetuflow-runtime = { workspace = true, optional = true }
+hetuflow-sqlx = { workspace = true, optional = true }
+
+[features]
+default = ["runtime"]
+core = ["dep:hetuflow-core"]
+runtime = ["core", "dep:hetuflow-runtime"]
+sqlx = ["runtime", "dep:hetuflow-sqlx"]
+full = ["sqlx"]

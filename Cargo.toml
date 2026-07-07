@@ -1,0 +1,355 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "examples/*"]
+
+[workspace.package]
+version = "0.2.0"
+description = "Fusion framework workspace"
+authors = ["Hylx Team"]
+license = "LicenseRef-Proprietary"
+repository = "https://github.com/fusion-data/fusions"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+# connectrpc 0.5+ 生成的 service trait 用 `impl Encodable<Out> + use<...>` RPITIT 返回，
+# 业务侧 impl 块声明具体类型（如 `ServiceResult<Out>`）触发该 lint。这是 0.5 changelog 文档化的
+# RPITIT refinement 行为，不影响运行时；统一在 workspace 抑制以保持 `cargo clippy` 干净。
+refining_impl_trait = { level = "allow", priority = 1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# ConnectError 来自上游 connectrpc crate（248 字节），不应让其大小驱动业务 service 签名改成 Box
+result_large_err = "allow"
+# repo/service 层签名常以扁平参数承载 SQL 列；强行参数对象化反而牺牲可读性
+too_many_arguments = "allow"
+
+[workspace.dependencies]
+# -- projects begin - fusion
+fusion-common = { version = "0.2.0", path = "crates/fusion-common" }
+fusion-core-macros = { version = "0.2.0", path = "crates/fusion-core-macros" }
+fusion-core = { version = "0.2.0", path = "crates/fusion-core" }
+fusion-security = { version = "0.2.0", path = "crates/fusion-security" }
+fusionsql-core = { version = "0.2.0", path = "crates/fusionsql-core" }
+fusionsql-macros = { version = "0.2.0", path = "crates/fusionsql-macros" }
+fusionsql = { version = "0.2.0", path = "crates/fusionsql" }
+fusion-db = { version = "0.2.0", path = "crates/fusion-db" }
+fusion-mq = { version = "0.2.0", path = "crates/fusion-mq" }
+fusion-web = { version = "0.2.0", path = "crates/fusion-web" }
+fusion-rpc = { version = "0.2.0", path = "crates/fusion-rpc" }
+fusion-ai = { version = "0.2.0", path = "crates/fusion-ai" }
+fusions = { version = "0.2.0", path = "crates/fusions" }
+# -- projects end - fusion
+
+# -- hetuflow workflow framework
+hetuflow-core = { version = "0.2.0", path = "crates/hetuflow-core" }
+hetuflow-runtime = { version = "0.2.0", path = "crates/hetuflow-runtime" }
+hetuflow-sqlx = { version = "0.2.0", path = "crates/hetuflow-sqlx" }
+hetuflow = { version = "0.2.0", path = "crates/hetuflow" }
+# -- hetuflow end
+
+# -- QRCode
+qrcode-rs = { version = "0.1" }
+image = { version = "0.25" }
+# -- Misc
+mime_guess = "2.0"
+content_inspector = "0.2"
+glob = "0.3"
+# -- Graph algorithms
+petgraph = "0.8"
+# -- System utilities
+num_cpus = "1"
+semver = { version = "1.0", features = ["serde"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+libc = "0.2"
+sysinfo = "0.38"
+dirs = { version = "6" }
+dotenvy = "0.15"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# -- 表格文件解析 / 生成（字典批量导入导出）
+csv = "1.4"
+calamine = "0.36"           # 读 XLSX（纯 Rust、懒解析、只读）
+rust_xlsxwriter = "0.96"    # 写 XLSX（XlsxWriter 原作者 Rust 原生实现）
+
+derive_more = { version = "2.1", features = [
+  "from",
+  "display",
+  "constructor",
+  "into",
+  "as_ref",
+] }
+toml = "1.1"
+config = { version = "0.15", default-features = false, features = [
+  "toml",
+  "yaml",
+  "json",
+] }
+itertools = "0.14"
+regex = { version = "1.12", features = ["unicode-case"] }
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
+# 国际化手机号校验（Google libphonenumber 的 Rust port，含全球所有国家 / 地区元数据）
+rlibphonenumber = "2"
+bytes = "1.11"
+ulid = { version = "1", features = ["serde", "uuid"] }
+uuid = { version = "1", features = [
+  "v4",
+  "v7",
+  "fast-rng",
+  "serde",
+  #    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+] }
+rust_decimal = { version = "1", features = ["serde-str"] }
+rust_decimal_macros = "1"
+typed-builder = "0.23"
+derive_builder = "0.20"
+derive-getters = "0.5"
+clap = { version = "4.6", features = ["derive"] }
+o2o = { version = "0.5" }
+secrecy = { version = "0.10", features = ["serde"] }
+# 用于实现依赖注入。提供了一种方法，可以设置一个插件注册表，从任何链接到应用程序的源文件中都可以进行注册。不需要有一个所有插件的中央列表。
+inventory = { version = "0.3" }
+# Make retry like a built-in feature provided by Rust.
+backon = { version = "1.6" }
+# -- Helpful macros for working with enums and strings
+enum-iterator = "2"
+strum = { version = "0.28", features = ["derive"] }
+enum_dispatch = "0.3"
+# -- Error
+anyhow = "1.0"
+thiserror = "2.0"
+hex = "0.4"
+# -- Macros
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+proc-macro2 = "1"
+# -- Crypt & Encoding
+base16ct = { version = "1.0", features = ["alloc"] }
+base64ct = { version = "1.8", features = ["std", "alloc"] }
+# 相比 base64ct 功能特性更丰富，性能更好。但 base64ct 更注重安全性，常用于密钥
+base64 = "0.22"
+aes-gcm = "0.11"
+hmac = "0.13"
+sha2 = "0.11"
+# hetuflow Phase E DAG guard：CEL (Common Expression Language) pure-Rust 解释器
+# json feature：G2 ForEach 用 cel::Value::json() 把 items_path 求值结果转回 serde_json 数组
+cel = { version = "0.14", features = ["json"] }
+argon2 = { version = "0.5", default-features = false, features = [
+  "alloc",
+  "password-hash",
+] }
+openssl = "0.10"
+# A non-cryptographic hash function using AES-NI for high performance, provides AHashMap and AHashSet
+# 胜在小键值（如 HashMap 键）的极低延迟
+ahash = { version = "0.8", features = ["runtime-rng", "serde", "getrandom"] }
+# provider_credentials internal RPC 解密结果 LRU 缓存（hit=30s / miss=5s）
+moka = { version = "0.12", features = ["future"] }
+# This crate is a native Rust port of Google’s HighwayHash, which is a fast, keyed, and strong hash function, whose output is hardware independent.
+# 胜在流式大文件的吞吐量（如文件校验）
+highway = { version = "1.3" }
+# -- JWT & JWE
+josekit = "0.10"
+# -- oauth2
+oauth2 = { version = "5.0" }
+openidconnect = { version = "4.0" }
+# -- Async & Concurrent/Parallel & Atomic
+futures = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
+async-stream = "0.3"
+tokio = { version = "1.52", features = [
+  "macros",          # #[tokio::main] and #[tokio::test]
+  "rt-multi-thread", # Multi-threaded runtime
+  "signal",          # Signal handling for graceful shutdown
+  "net",             # Network primitives
+  "fs",              # File system operations
+  "time",            # Time utilities
+  "sync",            # Synchronization primitives
+  "process",         # Process primitives
+] }
+tokio-tungstenite = { version = "0.29" }
+tokio-stream = { version = "0.1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+tokio-test = { version = "0.4" }
+tokio-mpmc = { version = "0.2" }
+arc-swap = { version = "1.8", features = ["serde"] }
+dashmap = { version = "6.1" }
+mea = { version = "0.6" }
+# -- Logging
+log = "0.4"
+logforth = { version = "0.30", features = ["starter-log", "append-file"] }
+# -- Tracing
+metrics = "0.24"
+tracing = { version = "0.1", features = ["log"] }
+tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+  "registry",
+  "env-filter",
+  "chrono",
+  "json",
+] }
+tracing-appender = "0.2"
+init-tracing-opentelemetry = { version = "0.38", features = [
+  "tracing_subscriber_ext",
+] }
+tracing-opentelemetry-instrumentation-sdk = "0.38"
+# -- Time
+chrono = { version = "0.4", default-features = false, features = [
+  "std",
+  "clock",
+  "serde",
+] }
+chrono-tz = "0.10"
+duration-str = "0.21"
+# -- scheduler
+croner = "3.0"
+hierarchical_hash_wheel_timer = { version = "1.4", features = ["uuid"] }
+# -- Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "chrono", "json", "rust_decimal"] }
+sea-query = { version = "0.32", features = ["attr", "thread-safe"] }
+sea-query-binder = { version = "0.7", features = ["with-json", "with-chrono"] }
+# 钉 =0.4.1：pgvector 0.4.2 起把 sqlx 依赖跳到 0.9，会与 workspace sqlx 0.8 形成双栈，
+# 其 Vector 的 sqlx Encode/Decode/Type impl 绑到 0.9 → fusion-ai（用 sqlx 0.8）编译不过。
+# 解钉前置：SeaQL 发布支持 sqlx 0.9 的 sea-query-binder 稳定版（连带 sea-query 0.32→1.0 迁移）——
+# crates.io 现存最新 binder 0.8.0-rc.7 仍钉 sqlx 0.8。详见 docs/exec-plans/TODOS.md「sqlx 0.8 → 0.9」。
+pgvector = { version = "=0.4.1", features = ["sqlx"] }
+# -- Serde
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_path_to_error = "0.1"
+serde_with = { version = "3.17", features = ["chrono_0_4"] }
+serde_json = { version = "1.0" }
+tsify = { version = "0.5", features = ["js"] }
+sonic-rs = { version = "0.5" }
+serde_repr = "0.1"
+serde_json_path = { version = "0.7" }
+schemars = { version = "1.2" }
+jsonschema = { version = "0.46" }
+nom = "8.0"
+# -- Web
+url = "2.5"
+urlencoding = "2.1"
+serde_urlencoded = "0.7"
+headers = "0.4"
+mime = "0.3"
+http = "1"
+http-body-util = "0.1"
+http-body = "1"
+# -- WASM
+js-sys = { version = "0.3" }
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
+wasm-bindgen-futures = { version = "0.4" }
+getrandom = { version = "0.4", default-features = false }
+rand_wasm = { version = "0.10", package = "rand" }
+web-sys = { version = "0.3", features = [
+  "Headers",
+  "Request",
+  "RequestInit",
+  "Response",
+  "Window",
+  "console",
+  "AbortController",
+  "AbortSignal",
+] }
+gloo-net = { version = "0.7", features = ["http", "json"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
+console_error_panic_hook = { version = "0.1" }
+serde-wasm-bindgen = { version = "0.6" }
+wee_alloc = { version = "0.4" }
+# async http client
+reqwest = { version = "0.13.3", features = [
+  # "rustls-tls-webpki-roots",
+  "json",
+  "gzip",
+  "stream",
+  "multipart",
+] }
+# lightweight sync http client
+ureq = { version = "3.3", features = ["json", "charset"] }
+hyper = "1"
+hyper-util = "0.1"
+tower = "0.5"
+tower-http = { version = "0.7", features = [
+  "fs",
+  "trace",
+  "cors",
+  "compression-full",
+  "sensitive-headers",
+  "validate-request",
+  "auth",
+] }
+tower-service = { version = "0.3" }
+tower-cookies = "0.11"
+cookie = "0.18"
+# -- Email SMTP（rustls backend, 与 sqlx 一致避免双 TLS 栈）
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
+axum = { version = "0.8", features = [
+  "macros",
+  "form",
+  "tokio",
+  "http1",
+  "http2",
+] }
+axum-core = { version = "0.5" }
+axum-extra = { version = "0.12", features = ["typed-header"] }
+axum-macros = { version = "0.5" }
+axum-test = { version = "19", features = ["reqwest", "typed-routing", "ws"] }
+utoipa = { version = "5.4", features = [
+  "axum_extras",
+  "chrono",
+  "decimal",
+  "rc_schema",
+] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9.0", features = ["vendored", "axum"] }
+# -- validator
+garde = { version = "0.22", features = ["derive"] }
+axum-valid = { version = "0.24", default-features = false, features = [
+  "basic",
+  "garde",
+] }
+insta = { version = "1" }
+once_cell = { version = "1" }
+
+# -- ConnectRPC
+connectrpc = { version = "0.8", features = ["axum"] }
+connectrpc-build = "0.8"
+buffa = { version = "0.8", features = ["json"] }
+buffa-build = "0.8"
+buffa-types = { version = "0.8", features = ["json"] }
+# protoc-bin-vendored = "3"
+# -- cloud storage access
+opendal = { version = "0.57", features = [
+  "services-oss",
+  "services-obs",
+  "services-s3",
+  "services-fs",
+  "services-memory",
+] }
+# -- request signing (Apache opendal-reqsign — Aliyun ACS3 / AWS SigV4 等云厂商签名 trait)
+reqsign-core = { version = "3.0.0" }
+# -- LLM
+rig = { package = "rig-core", version = "0.39", features = ["derive"] }
+rig-postgres = { version = "0.2" }
+rmcp = { version = "2.1", features = [
+  "client",
+  "reqwest",
+  "transport-streamable-http-client-reqwest",
+  "transport-child-process",
+  "tower",
+  "auth",
+] }
+# -- Dev/Test
+test-context = { version = "0.5" }
+pretty_assertions = "1.4"
+asserhttp = { version = "0.7", features = ["reqwest"] }
+
+# 让 debug build 的密码哈希运算维持 release 速度（crypto 密集型，debug=O0 会慢 10-30x）
+[profile.dev.package]
+argon2 = { opt-level = 3 }
+password-hash = { opt-level = 3 }

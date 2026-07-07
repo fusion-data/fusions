@@ -1,0 +1,6 @@
+[fusion.rpc]
+enable = false
+path_prefix = "/"
+
+[fusion.rpc.clients]
+# identity = { addr = "http://127.0.0.1:8080", plaintext = true }

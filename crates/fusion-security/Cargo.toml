@@ -1,0 +1,48 @@
+[package]
+name = "fusion-security"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["fusion-common/with-uuid"]
+with-jwt = ["josekit"]
+with-oauth = ["with-jwt", "dep:oauth2"]
+with-openid = ["with-jwt", "dep:openidconnect"]
+# 阿里云 ACS3-HMAC-SHA256 签名（基于 opendal-reqsign 的 SignRequest / ProvideCredential trait）
+with-aliyun-acs3 = ["dep:reqsign-core", "dep:bytes", "dep:http", "dep:percent-encoding", "dep:chrono", "dep:uuid", "dep:zeroize"]
+
+[dependencies]
+fusion-common = { workspace = true }
+fusion-core = { workspace = true }
+url = { workspace = true }
+tokio = { workspace = true }
+josekit = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+oauth2 = { workspace = true, optional = true }
+openidconnect = { workspace = true, optional = true }
+reqwest = { workspace = true }
+# -- aliyun-acs3 (feature gated)
+reqsign-core = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+percent-encoding = { version = "2", optional = true }
+chrono = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+# Credential.access_key_secret / security_token zero-on-drop（防 swap / coredump 残留）
+zeroize = { workspace = true, optional = true }
+
+[dev-dependencies]
+dotenvy = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

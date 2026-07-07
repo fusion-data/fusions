@@ -1,0 +1,46 @@
+//! OpenAI API client and Rig integration
+//!
+//! # Example
+//! ```
+//! use fusion_ai::providers::openai_compatible::Client;
+//! use fusion_ai::rig::client::CompletionClient;
+//!
+//! let client = Client::new("YOUR_API_KEY");
+//!
+//! let gpt4o = client.completion_model("gpt-4o");
+//! ```
+pub mod client;
+pub mod completion;
+pub mod embedding;
+pub mod responses_api;
+
+#[cfg(feature = "audio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "audio")))]
+pub mod audio_generation;
+#[cfg(feature = "image")]
+#[cfg_attr(docsrs, doc(cfg(feature = "image")))]
+pub mod image_generation;
+
+#[cfg(feature = "image")]
+#[cfg_attr(docsrs, doc(cfg(feature = "image")))]
+pub mod image_edit;
+
+pub mod transcription;
+
+mod client_wrapper;
+
+#[allow(ambiguous_glob_reexports)]
+pub use client::*;
+pub use client_wrapper::*;
+pub use completion::*;
+pub use embedding::*;
+
+#[cfg(feature = "audio")]
+pub use audio_generation::{TTS_1, TTS_1_HD};
+
+#[cfg(feature = "image")]
+pub use image_edit::{ImageEditModel, Usage as ImageEditUsage};
+#[cfg(feature = "image")]
+pub use image_generation::*;
+pub use streaming::*;
+pub use transcription::*;

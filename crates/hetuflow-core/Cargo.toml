@@ -1,0 +1,19 @@
+[package]
+name = "hetuflow-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "hetuflow workflow framework — core domain types, pure decisions, validation"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+chrono.workspace = true
+sha2 = { workspace = true }
+thiserror = { workspace = true }
