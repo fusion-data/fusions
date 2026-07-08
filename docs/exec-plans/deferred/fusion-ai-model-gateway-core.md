@@ -9,7 +9,7 @@
 
 - 建立 provider-neutral canonical request / response / stream chunk 类型。
 - 把 provider adapter、stream normalization、error normalization、usage extraction 从应用层收回 `fusion-ai`。
-- 将 `rig-core` 降级为 optional compatibility surface，最终允许默认构建不依赖 `rig-core`。
+- 将 `rig` 降级为 optional compatibility surface，最终允许默认构建不依赖 `rig`。
 - 保持现有 `LlmChatProvider` / `MeteredLlmProvider` 路径可渐进迁移。
 
 ## 2. 非目标
@@ -39,7 +39,7 @@ fusion-ai/src/model_gateway/
 - classify usage as runtime hot path, example, test or compat API;
 - add golden fixtures for chat, tool calling, streaming, usage and provider error mapping.
 
-### P1. `rig-core` optionalization
+### P1. `rig` optionalization
 
 - add `rig-compat` feature;
 - gate `pub use rig`, `ClientFactory`, agents, embeddings and rig-specific wrappers;
@@ -58,9 +58,9 @@ fusion-ai/src/model_gateway/
 
 `fusion-ai` exposes transform primitives only. Consuming applications construct credentials, route decisions, HTTP clients, retry/fallback policy and usage sinks.
 
-### P4. remove default `rig-core`
+### P4. remove default `rig`
 
-- default feature tree does not include `rig-core`;
+- default feature tree does not include `rig`;
 - legacy users migrate to `rig-compat` or a separate compatibility crate;
 - docs and examples stop using rig-first APIs.
 
@@ -73,7 +73,7 @@ fusion-ai/src/model_gateway/
 
 ## 6. activation triggers
 
-- `rig-core` blocks dependency upgrades or release stability;
+- `rig` blocks dependency upgrades or release stability;
 - non OpenAI-compatible providers become production path;
 - multiple applications need shared provider normalization;
 - provider stream / usage normalization starts duplicating across consumers.

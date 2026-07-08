@@ -106,7 +106,7 @@ fusion-web = { version = "0.2.0", path = "../repos/fusions/crates/fusion-web" }
 - **Database**: SQLx + SeaQuery + PostgreSQL
 - **Serialization**: serde + sonic-rs
 - **Observability**: tracing + tracing-subscriber + init-tracing-opentelemetry + metrics
-- **AI**: rig-core + rmcp
+- **AI**: rig + rmcp
 
 ---
 

@@ -7,7 +7,7 @@
 //!
 //! A Router is provided to select which provider to call at runtime.
 //!
-//! This crate is prepared as a rig-core-style provider library (compatible with rig-core patterns).
+//! This crate is prepared as a rig-style provider library (compatible with rig patterns).
 
 use ahash::HashMap;
 use async_trait::async_trait;

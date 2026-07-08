@@ -262,7 +262,7 @@ console_error_panic_hook = { version = "0.1" }
 serde-wasm-bindgen = { version = "0.6" }
 wee_alloc = { version = "0.4" }
 # async http client
-reqwest = { version = "0.13.3", features = [
+reqwest = { version = "0.13", features = [
   # "rustls-tls-webpki-roots",
   "json",
   "gzip",
@@ -332,7 +332,7 @@ opendal = { version = "0.57", features = [
   "services-memory",
 ] }
 # -- request signing (Apache opendal-reqsign — Aliyun ACS3 / AWS SigV4 等云厂商签名 trait)
-reqsign-core = { version = "3.0.0" }
+reqsign-core = { version = "3.0" }
 # -- LLM
 rig = { version = "0.39", features = ["derive"] }
 rig-postgres = { version = "0.39" }
