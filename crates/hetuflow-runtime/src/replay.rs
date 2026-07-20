@@ -29,8 +29,9 @@ use hetuflow_core::{
   WorkflowResult, WorkflowStatus, event_type,
 };
 
-/// notification 投递成功完成活动时 `reviewed_by` 落 nil uuid（`complete_activity_cas` reviewed_by=Uuid::nil）。
-const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
+/// notification 投递成功完成活动时 `reviewed_by` 落系统态哨兵（`complete_activity_cas` reviewed_by=0）。
+/// `reviewed_by` 是消费方的 user id（BIGINT），`"0"` = 无人工审阅者。
+const NIL_ACTOR: &str = "0";
 
 /// 重建出的实例投影（canonical 结构子集）。
 #[derive(Debug, Clone, PartialEq)]
@@ -174,9 +175,9 @@ pub fn fold_events(snapshot: &DefinitionSnapshot, events: &[EventRecord]) -> Rep
         if let Some(a) = activities.iter_mut().find(|a| a.id == id) {
           a.status = ActivityStatus::Completed;
           a.result = pstr(p, "result");
-          // notification 投递完成无前置 SIGNAL_RECEIVED：reviewer 落 nil、reviewed_at 取事件时间。
+          // notification 投递完成无前置 SIGNAL_RECEIVED：reviewer 落 0 哨兵、reviewed_at 取事件时间。
           if from_notification {
-            a.reviewed_by = Some(NIL_UUID.to_string());
+            a.reviewed_by = Some(NIL_ACTOR.to_string());
             a.reviewed_at = Some(ev.created_at);
           }
         }
@@ -524,7 +525,7 @@ mod tests {
     let a = &p.activities[0];
     assert_eq!(a.activity_type, ActivityType::Notification);
     assert_eq!(a.status, ActivityStatus::Completed);
-    assert_eq!(a.reviewed_by.as_deref(), Some(NIL_UUID));
+    assert_eq!(a.reviewed_by.as_deref(), Some(NIL_ACTOR));
     assert_eq!(a.reviewed_at, Some(ts(3)));
   }
 

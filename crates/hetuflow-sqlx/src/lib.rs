@@ -119,10 +119,10 @@ struct ActivityRow {
   activity_type: String,
   status: String,
   assignee_role: Option<String>,
-  assignee_id: Option<uuid::Uuid>,
+  assignee_id: Option<i64>,
   result: Option<String>,
   review_notes: Option<String>,
-  reviewed_by: Option<uuid::Uuid>,
+  reviewed_by: Option<i64>,
   reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
   round: i32,
 }
@@ -362,7 +362,7 @@ pub trait WorkflowStore: Send + Sync {
     dbx: &DbxPostgres,
     activity_id: uuid::Uuid,
     result: Option<&str>,
-    reviewed_by: uuid::Uuid,
+    reviewed_by: i64,
     review_notes: Option<&str>,
   ) -> Result<bool>;
 
@@ -898,7 +898,7 @@ impl WorkflowStore for PgWorkflowStore {
     dbx: &DbxPostgres,
     activity_id: uuid::Uuid,
     result: Option<&str>,
-    reviewed_by: uuid::Uuid,
+    reviewed_by: i64,
     review_notes: Option<&str>,
   ) -> Result<bool> {
     let n = dbx
