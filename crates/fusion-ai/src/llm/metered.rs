@@ -1,13 +1,10 @@
 //! Platform 模型 token 计量捕获缝 —— `MeteredLlmProvider` 装饰器 + `AiUsageSink` trait。
 //!
-//! 设计真相源：`docs/designs/ai/platform-model-token-metering.md` §3.2。
+//! ## 为什么是装饰器（不是 per-caller）
 //!
-//! ## 为什么是装饰器（不是 per-extractor）
-//!
-//! voice NLU（`LlmNluExtractor`）与 AIH（`LlmHealthAnalyzer`）是**同构** LLM 调用点：
-//! 均持 [`LlmChatProvider`] + 调 `chat_complete`，均经 [`super::build_provider`] 构造。
-//! 在 `build_provider` 输出处包一层 [`MeteredLlmProvider`] 一处覆盖所有调用方（含未来
-//! summary / rag），DRY 且不漏计已 live 的 AIH（plan-eng-review D-捕获层）。
+//! 所有 LLM 调用点都是**同构**的：均持 [`LlmChatProvider`] + 调 `chat_complete`，均经
+//! [`super::build_provider`] 构造。在 `build_provider` 输出处包一层 [`MeteredLlmProvider`]
+//! 即一处覆盖全部调用方，DRY 且不会漏计新增调用点。
 //!
 //! ## 捕获语义
 //!
@@ -16,11 +13,18 @@
 //! - `Err`（无 resp，请求失败未烧 token）→ **不记**。
 //! - `Ok` 但 `usage=None`（vendor 未回 usage）→ **不记**（无可计量事实）。
 //! - 捕获在 `chat_complete` 之外的装饰层，`AiUsageSink::record` 非阻塞 enqueue，
-//!   **绝不**阻塞实时语音热路径、**绝不**向 caller propagate 写错误。
+//!   **绝不**阻塞业务热路径、**绝不**向 caller propagate 写错误。
 //!
-//! outcome 细分（success vs no_tool_call-but-burned）由 caller 视角决定；装饰层只知
-//! `chat_complete` 成功与否，本期一律记 [`Outcome::Success`]（设计 §8 开放，可后补回标）。
+//! ## 消费方边界
+//!
+//! 本模块只定义**捕获缝**：装饰器 + 事件类型 + sink trait。持久化实现（`PgUsageSink`）、
+//! 路由策略、凭证真相源、用量读面与计费均属消费方应用，不进本仓
+//! （见 `docs/exec-plans/deferred/fusion-ai-model-gateway-core.md` 的边界声明）。
+//!
+//! outcome 细分（success vs 成功但结果模糊）由 caller 视角决定；装饰层只知
+//! `chat_complete` 成功与否，本期一律记 [`Outcome::Success`]（可后补回标）。
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -55,11 +59,14 @@ impl Outcome {
 ///
 /// AI feature route 四层解析的判定结果（enum-type-mapping-conventions.md R5：低基数 flag
 /// 用 inline CHECK，Rust 侧用 domain enum 而非裸 String）。`matched_scope` 在 `ResolvedRoute`
-/// 边界（voice / AIH 的 `resolve_*_provider`）由 [`Self::from_route_str`] 从上游字符串收敛：
-/// 未知值 / 上游缺省（`""`）→ 明确 [`Self::SystemDefault`]，杜绝 `""` 撞 CHECK 静默丢账。
+/// 边界由 [`Self::from_route_str`] 从上游字符串收敛：未知值 / 上游缺省（`""`）→ 明确
+/// [`Self::SystemDefault`]，杜绝 `""` 撞 CHECK 静默丢账。
+///
+/// [`Self::Dimension`] 是业务声明的 scope 维度（原 facility 专用层的泛化）：路由表以
+/// `scope_dimensions` 键值对表达作用域，命中非空维度集的行即属该层。
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum MatchedScope {
-  Facility,
+  Dimension,
   Tenant,
   Platform,
   /// 编译期默认 / fail-open / 上游未填 —— 收敛兜底值。
@@ -69,7 +76,7 @@ pub enum MatchedScope {
 impl MatchedScope {
   pub const fn as_str(self) -> &'static str {
     match self {
-      Self::Facility => "facility",
+      Self::Dimension => "dimension",
       Self::Tenant => "tenant",
       Self::Platform => "platform",
       Self::SystemDefault => "system_default",
@@ -77,11 +84,11 @@ impl MatchedScope {
   }
 
   /// 从上游 `ResolvedRoute.matched_scope` 字符串收敛到枚举。未知值 / 空串
-  /// （上游缺省，理论不发生——hylx-access 对四层均填充）→ [`Self::SystemDefault`]，
+  /// （上游缺省，理论不发生——路由服务对四层均填充）→ [`Self::SystemDefault`]，
   /// 防 `""` / typo 撞 `matched_scope` CHECK 静默丢账（enum 偏差修复）。
   pub fn from_route_str(raw: &str) -> Self {
     match raw {
-      "facility" => Self::Facility,
+      "dimension" => Self::Dimension,
       "tenant" => Self::Tenant,
       "platform" => Self::Platform,
       _ => Self::SystemDefault,
@@ -95,8 +102,10 @@ impl MatchedScope {
 #[derive(Debug, Clone)]
 pub struct AiUsageCtx {
   pub tenant_id: i64,
-  pub facility_id: Option<Uuid>,
-  /// AI feature 路由 feature_code（`'nlu'` | `'health_risk'` | `'summary'` | ...）。
+  /// 调用发生时的业务维度上下文（键 → 当前值），空 map = 租户级调用。
+  /// 泛化自原先单一的 `facility_id`：维度键集由消费方业务声明，共享层不认识具体键名。
+  pub dimensions: BTreeMap<String, String>,
+  /// AI feature 路由 feature_code（`'chat'` | `'summary'` | `'extract'` | ...）。
   pub feature_code: String,
   /// 命中层级（domain enum）。fail-open / 上游缺省由 [`MatchedScope::from_route_str`]
   /// 在 `ResolvedRoute` 边界收敛到 [`MatchedScope::SystemDefault`]。
@@ -104,9 +113,9 @@ pub struct AiUsageCtx {
   pub provider: String,
   pub model: String,
   pub credential_id: Option<Uuid>,
-  /// voice session id；AIH 无会话则 `None`。
+  /// 会话 id；无会话语义的调用则 `None`。
   pub session_id: Option<Uuid>,
-  /// 调用种类（`'voice_nlu'` | `'health_assess'`）。
+  /// 调用种类（`'ai_chat'` | ...）。
   pub request_kind: String,
 }
 
@@ -117,7 +126,8 @@ pub struct AiUsageCtx {
 pub struct AiUsageEvent {
   pub occurred_at: DateTime<Utc>,
   pub tenant_id: i64,
-  pub facility_id: Option<Uuid>,
+  /// 调用发生时的业务维度上下文快照（空 map = 租户级调用）。
+  pub dimensions: BTreeMap<String, String>,
   pub feature_code: String,
   pub provider: String,
   pub model: String,
@@ -145,7 +155,7 @@ impl AiUsageEvent {
     Self {
       occurred_at,
       tenant_id: ctx.tenant_id,
-      facility_id: ctx.facility_id,
+      dimensions: ctx.dimensions.clone(),
       feature_code: ctx.feature_code.clone(),
       provider: ctx.provider.clone(),
       model: ctx.model.clone(),
@@ -276,30 +286,42 @@ mod tests {
   fn ctx(matched_scope: MatchedScope) -> AiUsageCtx {
     AiUsageCtx {
       tenant_id: 2,
-      facility_id: Some(Uuid::now_v7()),
-      feature_code: "nlu".into(),
+      dimensions: BTreeMap::from([("region".to_string(), "sg".to_string())]),
+      feature_code: "chat".into(),
       matched_scope,
       provider: "deepseek".into(),
       model: "deepseek-v4-flash".into(),
       credential_id: Some(Uuid::now_v7()),
       session_id: Some(Uuid::now_v7()),
-      request_kind: "voice_nlu".into(),
+      request_kind: "ai_chat".into(),
     }
   }
 
   #[test]
   fn matched_scope_from_route_str_converges_unknown_and_empty_to_system_default() {
-    assert_eq!(MatchedScope::from_route_str("facility"), MatchedScope::Facility);
+    assert_eq!(MatchedScope::from_route_str("dimension"), MatchedScope::Dimension);
     assert_eq!(MatchedScope::from_route_str("tenant"), MatchedScope::Tenant);
     assert_eq!(MatchedScope::from_route_str("platform"), MatchedScope::Platform);
     assert_eq!(MatchedScope::from_route_str("system_default"), MatchedScope::SystemDefault);
     // 空串（上游缺省）/ 未知值 → SystemDefault，杜绝 "" 撞 CHECK。
     assert_eq!(MatchedScope::from_route_str(""), MatchedScope::SystemDefault);
     assert_eq!(MatchedScope::from_route_str("bogus"), MatchedScope::SystemDefault);
+    // 旧的 facility 层名已泛化为 dimension；残留调用方传 "facility" 时收敛到兜底值，
+    // 而非静默当作维度层记账。
+    assert_eq!(MatchedScope::from_route_str("facility"), MatchedScope::SystemDefault);
     // round-trip：as_str 的输出经 from_route_str 还原同值。
-    for s in [MatchedScope::Facility, MatchedScope::Tenant, MatchedScope::Platform, MatchedScope::SystemDefault] {
+    for s in [MatchedScope::Dimension, MatchedScope::Tenant, MatchedScope::Platform, MatchedScope::SystemDefault] {
       assert_eq!(MatchedScope::from_route_str(s.as_str()), s);
     }
+  }
+
+  #[test]
+  fn event_carries_dimension_snapshot_from_ctx() {
+    let c = ctx(MatchedScope::Dimension);
+    let usage = TokenUsage { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 };
+    let ev = AiUsageEvent::from_ctx_usage(&c, &usage, Outcome::Success, Utc::now(), Some(7));
+    assert_eq!(ev.dimensions, c.dimensions, "维度快照 MUST 随事件落账");
+    assert_eq!(ev.matched_scope, MatchedScope::Dimension);
   }
 
   #[tokio::test]
@@ -316,8 +338,8 @@ mod tests {
     assert_eq!(ev.completion_tokens, 30);
     assert_eq!(ev.total_tokens, 150);
     assert_eq!(ev.outcome, Outcome::Success);
-    assert_eq!(ev.feature_code, "nlu");
-    assert_eq!(ev.request_kind, "voice_nlu");
+    assert_eq!(ev.feature_code, "chat");
+    assert_eq!(ev.request_kind, "ai_chat");
   }
 
   #[tokio::test]

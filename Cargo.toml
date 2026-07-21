@@ -51,7 +51,7 @@ hetuflow = { version = "0.2.0", path = "crates/hetuflow" }
 # -- hetuflow end
 
 # -- QRCode
-qrcode-rs = { version = "0.1" }
+qrcode-rs = { version = "2.0" }
 image = { version = "0.25" }
 # -- Misc
 mime_guess = "2.0"
@@ -68,7 +68,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 libc = "0.2"
-sysinfo = "0.38"
+sysinfo = "0.39"
 dirs = { version = "6" }
 dotenvy = "0.15"
 zeroize = { version = "1.8", features = ["derive"] }
@@ -91,13 +91,13 @@ config = { version = "0.15", default-features = false, features = [
   "yaml",
   "json",
 ] }
-itertools = "0.14"
+itertools = "0.15"
 regex = { version = "1.12", features = ["unicode-case"] }
 rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
 # 国际化手机号校验（Google libphonenumber 的 Rust port，含全球所有国家 / 地区元数据）
 rlibphonenumber = "2"
 bytes = "1.11"
-ulid = { version = "1", features = ["serde", "uuid"] }
+ulid = { version = "3", features = ["serde", "uuid"] }
 uuid = { version = "1", features = [
   "v4",
   "v7",
@@ -127,7 +127,7 @@ thiserror = "2.0"
 hex = "0.4"
 # -- Macros
 quote = "1.0"
-syn = { version = "2.0", features = ["full"] }
+syn = { version = "3.0", features = ["full"] }
 proc-macro2 = "1"
 # -- Crypt & Encoding
 base16ct = { version = "1.0", features = ["alloc"] }
@@ -173,7 +173,7 @@ tokio = { version = "1.52", features = [
   "sync",            # Synchronization primitives
   "process",         # Process primitives
 ] }
-tokio-tungstenite = { version = "0.29" }
+tokio-tungstenite = { version = "0.30" }
 tokio-stream = { version = "0.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
 tokio-test = { version = "0.4" }
@@ -214,10 +214,21 @@ hierarchical_hash_wheel_timer = { version = "1.4", features = ["uuid"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "chrono", "json", "rust_decimal"] }
 sea-query = { version = "0.32", features = ["attr", "thread-safe"] }
 sea-query-binder = { version = "0.7", features = ["with-json", "with-chrono"] }
-# 钉 =0.4.1：pgvector 0.4.2 起把 sqlx 依赖跳到 0.9，会与 workspace sqlx 0.8 形成双栈，
-# 其 Vector 的 sqlx Encode/Decode/Type impl 绑到 0.9 → fusion-ai（用 sqlx 0.8）编译不过。
-# 解钉前置：SeaQL 发布支持 sqlx 0.9 的 sea-query-binder 稳定版（连带 sea-query 0.32→1.0 迁移）——
-# crates.io 现存最新 binder 0.8.0-rc.7 仍钉 sqlx 0.8。详见 docs/exec-plans/TODOS.md「sqlx 0.8 → 0.9」。
+# sqlx / sea-query / pgvector 是一组耦合依赖 —— 改动任一项前先看下面的约束链。
+#
+#   sqlx 保持 0.8       —— sea-query-binder 的稳定版 0.7.0 与 0.8.0-rc 线**都**依赖 `sqlx ^0.8`，
+#                          fusionsql / fusion-db 建立其上。sqlx 0.9 已发布但在 SeaQL 放出接受它的
+#                          binder 之前无法启用。
+#   sea-query 保持 0.32 —— 稳定版 binder 0.7.0 依赖 `sea-query ^0.32`；sea-query 1.0 只有 rc binder。
+#   rig / rig-postgres 保持 0.39 —— rig-postgres 0.40 要求 `sqlx ^0.9`，被上面一条阻塞。
+#
+# pgvector 钉 =0.4.1，属同一耦合块，理由需说准确：0.4.1 声明 `sqlx ^0.8`，会落到 workspace 自己的
+# sqlx 上；0.4.2 把范围**放宽**为 `sqlx >=0.8, <0.10` —— 跨越两个 0.x 兼容组的范围会让 cargo 选**最高**
+# 的那组（0.9），而不是复用图中已有的 0.8。结果是同一二进制里两套 sqlx，且 pgvector 的 `Vector`
+# Encode/Decode/Type impl 绑在 fusionsql 用不了的 0.9 那份上。放宽的范围读起来更宽松，实际效果相反。
+#
+# 解钉条件是「图中不再有 sqlx 0.8」（即上面 sea-query-binder 链放开 sqlx 0.9 之后），
+# 而不是「pgvector 的范围看起来允许 0.8」。
 pgvector = { version = "=0.4.1", features = ["sqlx"] }
 # -- Serde
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -229,7 +240,7 @@ sonic-rs = { version = "0.5" }
 serde_repr = "0.1"
 serde_json_path = { version = "0.7" }
 schemars = { version = "1.2" }
-jsonschema = { version = "0.46" }
+jsonschema = { version = "0.48" }
 nom = "8.0"
 # -- Web
 url = "2.5"
@@ -298,7 +309,7 @@ axum = { version = "0.8", features = [
 axum-core = { version = "0.5" }
 axum-extra = { version = "0.12", features = ["typed-header"] }
 axum-macros = { version = "0.5" }
-axum-test = { version = "19", features = ["reqwest", "typed-routing", "ws"] }
+axum-test = { version = "21", features = ["reqwest", "typed-routing", "ws"] }
 utoipa = { version = "5.4", features = [
   "axum_extras",
   "chrono",
@@ -308,8 +319,8 @@ utoipa = { version = "5.4", features = [
 utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9.0", features = ["vendored", "axum"] }
 # -- validator
-garde = { version = "0.22", features = ["derive"] }
-axum-valid = { version = "0.24", default-features = false, features = [
+garde = { version = "0.23", features = ["derive"] }
+axum-valid = { version = "0.25", default-features = false, features = [
   "basic",
   "garde",
 ] }
@@ -317,6 +328,9 @@ insta = { version = "1" }
 once_cell = { version = "1" }
 
 # -- ConnectRPC
+#
+# buffa 保持 0.8（尽管 0.9 已发布）：connectrpc 0.8.1（最新版）依赖 `buffa ^0.8.1`，且生成代码
+# 混用两个 crate 的类型，必须同步升级。待某个 connectrpc 版本接受 buffa 0.9 后再一起升。
 connectrpc = { version = "0.8", features = ["axum"] }
 connectrpc-build = "0.8"
 buffa = { version = "0.8", features = ["json"] }
@@ -347,7 +361,7 @@ rmcp = { version = "2.1", features = [
 # -- Dev/Test
 test-context = { version = "0.5" }
 pretty_assertions = "1.4"
-asserhttp = { version = "0.7", features = ["reqwest"] }
+asserhttp = { version = "0.8", features = ["reqwest"] }
 
 # 让 debug build 的密码哈希运算维持 release 速度（crypto 密集型，debug=O0 会慢 10-30x）
 [profile.dev.package]
