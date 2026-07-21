@@ -308,7 +308,7 @@ impl Task for ValidationTask {
       error!("Maximum retry attempts ({}) exceeded. Failing the workflow.", MAX_RETRIES);
       return Err(TaskExecutionFailed(format!(
         "Maximum retry attempts ({}) exceeded. Last validation comment: {:?}",
-        MAX_RETRIES, &validation_result.comment
+        MAX_RETRIES, validation_result.comment
       )));
     }
     // we still have another chance to try

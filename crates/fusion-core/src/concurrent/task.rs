@@ -106,7 +106,7 @@ where
       loop {
         match self.run_loop().await {
           Ok(result) => {
-            log::info!("The ServiceTask: [{}] has been executed successfully after {} retries", &name, retry_count);
+            log::info!("The ServiceTask: [{}] has been executed successfully after {} retries", name, retry_count);
             return Ok(TaskResult { result, retry_count });
           }
           Err(err) => {
@@ -114,7 +114,7 @@ where
             if retry_count > retry_limit {
               log::error!(
                 "The ServiceTask: [{}] stop after {} retries has reached the retry limit: {}",
-                &name,
+                name,
                 retry_count,
                 retry_limit
               );
