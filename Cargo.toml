@@ -9,7 +9,7 @@ authors = ["Hylx Team"]
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/fusion-data/fusions"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.97"
 publish = false
 
 [workspace.lints.rust]
