@@ -18,15 +18,18 @@ pub struct BmcConfig {
   pub has_owner_id: bool,
   pub has_optimistic_lock: bool,
   pub order_bys: Option<StaticOrderBys>,
-  /// 排序列白名单（SQL 注入防护，opt-in）。
+  /// 排序列显式白名单（覆盖实体列默认名单）。
   ///
   /// `OrderBy` 的列名直接拼进无法参数化的 `ORDER BY` 子句（`to_sql()` 仅做引号
-  /// 转义），`From<&str>` 构造期不做任何校验。设置此字段后，分页 / 列表查询路径
-  /// （`compute_page`）会校验每个 `OrderBy` 的列名 ∈ 白名单，非法即返回
+  /// 转义），`From<&str>` 构造期不做任何校验。分页 / 列表查询路径
+  /// （`compute_page`）会校验客户端提交的每个 `OrderBy` 列名，非法即返回
   /// [`crate::SqlError::InvalidArgument`]。
   ///
-  /// **`None` 时跳过校验**——保证现有所有 BMC 零行为变更；需要防护的表用
-  /// [`Self::with_order_by_allowlist`] 显式声明可排序列集合。
+  /// **`None` 时按实体列集合校验（opt-out 安全默认）**：名单回落为
+  /// `HasFields::field_names()`，客户端最多只能按实体自身的列排序。设置此字段
+  /// 用于两类场景：比实体列集合更收紧（实体列中仍有不宜作排序侧信道的敏感列），
+  /// 或显式放开 join / 计算列。服务端默认排序（[`Self::with_order_bys`]）是受信
+  /// 配置，不经过校验。
   pub order_by_allowlist: Option<&'static [&'static str]>,
 }
 
@@ -147,10 +150,11 @@ impl BmcConfig {
     self
   }
 
-  /// 声明排序列白名单，启用 `ORDER BY` 列名注入防护（opt-in）。
+  /// 声明排序列显式白名单，**覆盖**默认的实体列集合名单。
   ///
+  /// 未调用此方法的 BMC 默认按 `HasFields::field_names()` 校验客户端排序列
+  /// （opt-out 安全默认）；本方法用于比实体列更收紧，或显式放开 join / 计算列。
   /// 列名应为剥离 `!` 降序前缀后的裸列名（校验时会先 `OrderBy::parse()`）。
-  /// 未调用此方法的 BMC 维持原行为（不校验）。
   #[must_use]
   pub fn with_order_by_allowlist(mut self, allowlist: &'static [&'static str]) -> Self {
     self.order_by_allowlist = Some(allowlist);
@@ -200,6 +204,12 @@ impl BmcConfig {
 /// Note: This trait should not be confused with the `BaseCrudBmc` trait, which provides
 ///       common default CRUD BMC functions for a given Bmc/Entity.
 pub trait DbBmc {
+  /// BMC 元配置（表名 / 审计列 / 逻辑删除 / 排序 allowlist 等）。
+  ///
+  /// 前导下划线是本 trait 的 **protected 约定**：该方法由实现方提供（通常配合
+  /// `OnceLock<BmcConfig>`），仅供 `fusionsql::base::*` CRUD 框架函数读取；
+  /// 业务代码 MUST NOT 直接调用它做逻辑判断。下划线即"实现它、别调它"的信号，
+  /// 不是命名遗留。
   fn _bmc_config() -> &'static BmcConfig;
   // fn _dynamic_config() -> DynBmcConfig {
   //   DynBmcConfig::default()

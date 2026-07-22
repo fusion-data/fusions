@@ -102,15 +102,15 @@ fn process_struct(name: &Ident, data: &DataStruct) -> syn::Result<proc_macro2::T
   // };
 
   let expanded = quote! {
-    impl From<#name> for sea_query::Value {
+    impl From<#name> for ::fusionsql::sea_query::Value {
       fn from(value: #name) -> Self {
         Self::#value_variant(Some(value.0))
       }
     }
 
-    impl sea_query::Nullable for #name {
-      fn null() -> sea_query::Value {
-        sea_query::Value::#value_variant(None)
+    impl ::fusionsql::sea_query::Nullable for #name {
+      fn null() -> ::fusionsql::sea_query::Value {
+        ::fusionsql::sea_query::Value::#value_variant(None)
       }
     }
   };
@@ -140,7 +140,7 @@ fn process_enum(name: &Ident, data_enum: &DataEnum) -> proc_macro2::TokenStream 
 
   // Generate the final token stream
   let expanded = quote! {
-    impl From<#name> for sea_query::Value {
+    impl From<#name> for ::fusionsql::sea_query::Value {
       fn from(val: #name) -> Self {
         match val {
           #(#arms)*
@@ -148,10 +148,10 @@ fn process_enum(name: &Ident, data_enum: &DataEnum) -> proc_macro2::TokenStream 
       }
     }
 
-    impl sea_query::Nullable for #name {
-      fn null() -> sea_query::Value {
+    impl ::fusionsql::sea_query::Nullable for #name {
+      fn null() -> ::fusionsql::sea_query::Value {
         // #name::#first_variant.into()
-        sea_query::Value::String(None)
+        ::fusionsql::sea_query::Value::String(None)
       }
     }
   };

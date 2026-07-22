@@ -46,8 +46,8 @@ where
   query.cond_where(cond);
   fill_select_statement(bmc_config, &mut query);
 
-  // page
-  let page = compute_page(bmc_config, page)?;
+  // page（ORDER BY 列名默认按实体列集合校验，显式 allowlist 优先）
+  let page = compute_page(bmc_config, page, E::field_names())?;
   apply_to_sea_query(&page, &mut query);
 
   // -- Execute the query

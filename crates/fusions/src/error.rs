@@ -149,6 +149,18 @@ impl DataError {
     }
   }
 
+  /// 创建功能未实现错误（501 / Connect `Unimplemented`）。与 503 区分：
+  /// 重试不会成功，调用方不应重试。
+  pub fn not_implemented(msg: impl Into<Cow<'static, str>>) -> Self {
+    Self {
+      code: Cow::Borrowed(codes::NOT_IMPLEMENTED),
+      message: Some(msg.into()),
+      request_id: None,
+      details: None,
+      source: None,
+    }
+  }
+
   /// 创建业务错误（自定义错误码）
   pub fn biz_error(
     code: impl Into<Cow<'static, str>>,
@@ -383,7 +395,8 @@ impl From<connectrpc::ConnectError> for DataError {
       ErrorCode::FailedPrecondition => DataError::failed_precondition(msg),
       ErrorCode::Aborted => DataError::internal(codes::RPC_ERROR, msg, None),
       ErrorCode::OutOfRange => DataError::bad_request(msg),
-      ErrorCode::Unimplemented => DataError::internal(codes::SERVICE_UNAVAILABLE, msg, None),
+      // Unimplemented 是永久性失败（重试无意义），不得映射为可重试的 503
+      ErrorCode::Unimplemented => DataError::not_implemented(msg),
       ErrorCode::Internal => DataError::server_error(msg),
       ErrorCode::Unavailable => DataError::internal(codes::SERVICE_UNAVAILABLE, msg, None),
       ErrorCode::DataLoss => DataError::internal(codes::RPC_ERROR, msg, None),
@@ -415,9 +428,10 @@ impl From<DataError> for connectrpc::ConnectError {
       // rate_limit 命名空间 -> ResourceExhausted
       codes::RATE_LIMITED | codes::RETRY_LIMIT => ErrorCode::ResourceExhausted,
 
-      // system 命名空间 -> Internal / Unavailable
+      // system 命名空间 -> Internal / Unavailable / Unimplemented
       codes::INTERNAL_ERROR | codes::CHANNEL_ERROR | codes::RPC_ERROR => ErrorCode::Internal,
       codes::SERVICE_UNAVAILABLE | codes::CONFIG_ERROR | codes::IO_ERROR => ErrorCode::Unavailable,
+      codes::NOT_IMPLEMENTED => ErrorCode::Unimplemented,
 
       // 默认
       _ => ErrorCode::Unknown,
@@ -467,6 +481,8 @@ impl From<fusionsql::SqlError> for DataError {
       SqlError::CountFail { schema, table } => DataError::server_error(format!("CountFail, {:?}:{}", schema, table)),
       e @ SqlError::InvalidDatabase(_) => DataError::server_error(e.to_string()),
       e @ SqlError::CantCreateModelManagerProvider(_) => DataError::server_error(e.to_string()),
+      // 调用侧装配缺陷（未 with_ctx 就做上下文相关操作），不是认证失败 → 500 而非 401
+      e @ SqlError::CtxMissing => DataError::server_error(e.to_string()),
       e @ SqlError::IntoSeaError(_) => DataError::server_error(e.to_string()),
       e @ SqlError::SeaQueryError(_) => DataError::server_error(e.to_string()),
       e @ SqlError::JsonError(_) => DataError::server_error(e.to_string()),
@@ -562,6 +578,69 @@ impl From<fusion_security::SecurityError> for DataError {
 #[cfg(feature = "ai")]
 impl From<fusion_ai::AiError> for DataError {
   fn from(value: fusion_ai::AiError) -> Self {
-    DataError::server_error(value.to_string())
+    use fusion_ai::AiError;
+    use fusion_ai::rig::completion::CompletionError;
+    use fusion_ai::rig::image_generation::ImageGenerationError;
+
+    let msg = value.to_string();
+    // 上游连接失败 / provider 返回错误 → 503（瞬态，可重试）；
+    // 请求构造 / 响应解析 / 工厂装配缺陷 → 500（本服务缺陷，重试无意义）。
+    let upstream_transient = matches!(
+      &value,
+      AiError::CompletionError(CompletionError::HttpError(_) | CompletionError::ProviderError(_))
+        | AiError::ImageGenerationError(ImageGenerationError::HttpError(_) | ImageGenerationError::ProviderError(_))
+    );
+    if upstream_transient {
+      DataError::internal(codes::SERVICE_UNAVAILABLE, msg, Some(Box::new(value)))
+    } else {
+      DataError::server_error(msg).with_source(value)
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn not_implemented_code_survives_connect_round_trip() {
+    #[cfg(feature = "rpc")]
+    {
+      use connectrpc::{ConnectError, ErrorCode};
+
+      // DataError → ConnectError：501 语义映射 Unimplemented，而非 Unknown
+      let data_err = DataError::not_implemented("rpc not implemented");
+      let connect_err: ConnectError = data_err.into();
+      assert_eq!(connect_err.code, ErrorCode::Unimplemented);
+
+      // ConnectError → DataError：Unimplemented 不得映射为可重试的 503
+      let back: DataError = ConnectError::new(ErrorCode::Unimplemented, "nope").into();
+      assert_eq!(back.code.as_ref(), codes::NOT_IMPLEMENTED);
+    }
+  }
+
+  #[cfg(feature = "ai")]
+  #[test]
+  fn ai_error_maps_transient_upstream_to_service_unavailable() {
+    use fusion_ai::AiError;
+    use fusion_ai::rig::completion::CompletionError;
+
+    // provider / HTTP 上游错误 → 503（可重试），并保留错误链
+    let err: DataError = AiError::CompletionError(CompletionError::ProviderError("rate limited".into())).into();
+    assert_eq!(err.code.as_ref(), codes::SERVICE_UNAVAILABLE);
+    assert!(core::error::Error::source(&err).is_some(), "source chain must be preserved");
+
+    // 本地缺陷（响应解析失败）→ 500
+    let err: DataError = AiError::CompletionError(CompletionError::ResponseError("bad json".into())).into();
+    assert_eq!(err.code.as_ref(), codes::INTERNAL_ERROR);
+    assert!(core::error::Error::source(&err).is_some(), "source chain must be preserved");
+  }
+
+  #[cfg(feature = "db")]
+  #[test]
+  fn sql_ctx_missing_maps_to_internal_not_unauthorized() {
+    // 未 with_ctx 是装配缺陷 → 500；不得伪装成 401 误导排障方向
+    let err: DataError = fusionsql::SqlError::CtxMissing.into();
+    assert_eq!(err.code.as_ref(), codes::INTERNAL_ERROR);
   }
 }

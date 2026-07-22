@@ -18,7 +18,11 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
     Err(err) => return err.to_compile_error().into(),
   };
 
-  let struct_attrs = get_struct_fusionsql_props(&ast).unwrap();
+  // 属性写错时发正常编译诊断，而不是 "proc-macro panicked"（无 span、难定位）
+  let struct_attrs = match get_struct_fusionsql_props(&ast) {
+    Ok(attrs) => attrs,
+    Err(err) => return err.to_compile_error().into(),
+  };
 
   //// Properties to be collected
   let mut props: Vec<&Option<Ident>> = Vec::new(); // not needed for now.
@@ -39,7 +43,10 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
         props_opval_idents.push(ident);
 
         // -- Extract the attributes
-        let fusionsql_field_attr = get_filter_field_attr(field).unwrap();
+        let fusionsql_field_attr = match get_filter_field_attr(field) {
+          Ok(attr) => attr,
+          Err(err) => return err.to_compile_error().into(),
+        };
 
         // -- rel
         let block_rel = if let Some(rel) = fusionsql_field_attr.rel {
@@ -60,7 +67,7 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
           quote! { None }
         };
         props_filter_node_options.push(quote! {
-          fusionsql::filter::FilterNodeOptions {
+          ::fusionsql::filter::FilterNodeOptions {
             cast_as: #quote_filter_node_options_cast_as,
           }
         });
@@ -72,14 +79,14 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
           let to_sea_condition_fn = syn::Ident::new(&to_sea_condition_fn, proc_macro2::Span::call_site());
           quote! {
             // None
-            let fn_holder = fusionsql::filter::ToSeaConditionFnHolder::new(#to_sea_condition_fn);
+            let fn_holder = ::fusionsql::filter::ToSeaConditionFnHolder::new(#to_sea_condition_fn);
             let fn_holder = Some(fn_holder.into());
           }
         } else if let Some(to_sea_value_fn) = fusionsql_field_attr.to_sea_value_fn {
           let to_sea_value_fn = syn::Ident::new(&to_sea_value_fn, proc_macro2::Span::call_site());
           quote! {
             // None
-            let fn_holder = fusionsql::filter::ToSeaValueFnHolder::new(#to_sea_value_fn);
+            let fn_holder = ::fusionsql::filter::ToSeaValueFnHolder::new(#to_sea_value_fn);
             let fn_holder = Some(fn_holder.into());
           }
         } else {
@@ -97,9 +104,9 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
   let ff_opt_node_pushes = quote! {
     #(
       if let Some(op_vals) = self.#props_opval_idents {
-        // let op_vals: Vec<fusionsql::filter::OpVal> = val.0.into_iter().map(|n| n.into()).collect();
+        // let op_vals: Vec<::fusionsql::filter::OpVal> = val.0.into_iter().map(|n| n.into()).collect();
         #props_opval_to_sea_holder_fn_build
-        let node = fusionsql::filter::FilterNode {
+        let node = ::fusionsql::filter::FilterNode {
           rel: #props_opval_rels,
           name: stringify!(#props_opval_idents).to_string(),
           opvals: op_vals.into(),
@@ -113,8 +120,8 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
 
   //// Out code for the impl IntoFilterNodes
   let out_impl_into_filter_nodes = quote! {
-    impl fusionsql::filter::IntoFilterNodes for #struct_name {
-      fn filter_nodes(self, rel: Option<String>) -> Vec<fusionsql::filter::FilterNode> {
+    impl ::fusionsql::filter::IntoFilterNodes for #struct_name {
+      fn filter_nodes(self, rel: Option<String>) -> Vec<::fusionsql::filter::FilterNode> {
         let mut nodes = Vec::new();
         #ff_opt_node_pushes
         nodes
@@ -124,17 +131,17 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
 
   //// Out code for the from struct for Vec<FilterNode>
   let out_into_filter_node = quote! {
-    impl From<#struct_name> for Vec<fusionsql::filter::FilterNode> {
+    impl From<#struct_name> for Vec<::fusionsql::filter::FilterNode> {
       fn from(val: #struct_name) -> Self {
-        fusionsql::filter::IntoFilterNodes::filter_nodes(val, None)
+        ::fusionsql::filter::IntoFilterNodes::filter_nodes(val, None)
       }
     }
   };
 
   let out_into_op_group = quote! {
-    impl From<#struct_name> for fusionsql::filter::FilterGroup {
+    impl From<#struct_name> for ::fusionsql::filter::FilterGroup {
       fn from(val: #struct_name) -> Self {
-        let nodes: Vec<fusionsql::filter::FilterNode> = val.into();
+        let nodes: Vec<::fusionsql::filter::FilterNode> = val.into();
         nodes.into()
       }
     }
@@ -142,20 +149,20 @@ pub fn derive_filter_nodes_inner(input: TokenStream) -> TokenStream {
 
   //// Out code for from struct for FilterGroups
   let out_into_op_groups = quote! {
-    impl From<#struct_name> for fusionsql::filter::FilterGroups {
+    impl From<#struct_name> for ::fusionsql::filter::FilterGroups {
       fn from(val: #struct_name) -> Self {
-        let nodes: Vec<fusionsql::filter::FilterNode> = val.into();
+        let nodes: Vec<::fusionsql::filter::FilterNode> = val.into();
         nodes.into()
       }
     }
   };
 
   let out_sea_filter = quote! {
-    impl TryFrom<#struct_name> for sea_query::Condition {
-      type Error = fusionsql::filter::IntoSeaError;
+    impl TryFrom<#struct_name> for ::fusionsql::sea_query::Condition {
+      type Error = ::fusionsql::filter::IntoSeaError;
 
-      fn try_from(val: #struct_name) -> fusionsql::filter::SeaResult<Self> {
-        fusionsql::filter::FilterGroup::from(val).try_into()
+      fn try_from(val: #struct_name) -> ::fusionsql::filter::SeaResult<Self> {
+        ::fusionsql::filter::FilterGroup::from(val).try_into()
       }
     }
   };

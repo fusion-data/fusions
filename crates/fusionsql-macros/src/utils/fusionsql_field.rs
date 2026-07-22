@@ -27,17 +27,14 @@ pub struct ModelsqlFieldsAndSkips<'a> {
   pub field_mask_field: Option<&'a Field>,
 }
 
-pub fn get_fusionsql_field_props_and_skips(fields: &FieldsNamed) -> ModelsqlFieldsAndSkips<'_> {
+pub fn get_fusionsql_field_props_and_skips(fields: &FieldsNamed) -> syn::Result<ModelsqlFieldsAndSkips<'_>> {
   let mut fusionsql_fields = Vec::new();
   let mut skipped_fields = Vec::new();
   let mut field_mask_field: Option<&Field> = None;
 
   for field in &fields.named {
-    // -- Get the FieldAttr
-    let mfield_attr = get_mfield_prop_attr(field);
-
-    // TODO: Need to check better handling.
-    let mfield_attr = mfield_attr.unwrap();
+    // -- Get the FieldAttr（属性写错向上传播 syn::Error，由 derive 入口转 compile_error）
+    let mfield_attr = get_mfield_prop_attr(field)?;
 
     if mfield_attr.is_field_mask {
       field_mask_field = Some(field);
@@ -59,7 +56,10 @@ pub fn get_fusionsql_field_props_and_skips(fields: &FieldsNamed) -> ModelsqlFiel
     let is_option = type_name.contains("Option ");
 
     // -- name
-    let prop_name = ident.as_ref().map(ToString::to_string).unwrap();
+    let prop_name = ident
+      .as_ref()
+      .map(ToString::to_string)
+      .ok_or_else(|| syn::Error::new_spanned(field, "Fields derive only supports named-field structs"))?;
     let attr_name = mfield_attr.name;
     let name = attr_name.clone().unwrap_or_else(|| prop_name.clone());
 
@@ -78,7 +78,7 @@ pub fn get_fusionsql_field_props_and_skips(fields: &FieldsNamed) -> ModelsqlFiel
     });
   }
 
-  ModelsqlFieldsAndSkips { fusionsql_fields, skipped_fields, field_mask_field }
+  Ok(ModelsqlFieldsAndSkips { fusionsql_fields, skipped_fields, field_mask_field })
 }
 
 // endregion: --- Field Prop (i.e., sqlb Field)

@@ -25,11 +25,23 @@ impl WebServerBuilder {
     self
   }
 
-  pub async fn build(self) -> Result<(), WebError> {
+  /// Bind the configured listener and run the serve loop, **blocking until
+  /// shutdown** (graceful when [`Self::with_shutdown`] was supplied). This is
+  /// not a builder-style "build and return" — the future only resolves when
+  /// the server exits.
+  ///
+  /// Requires an initialized global [`Application`] (i.e. call after
+  /// `Application::builder()...run()`); panics otherwise.
+  pub async fn serve(self) -> Result<(), WebError> {
     let app = Application::global();
     app.config_registry().prepend_config_source(File::from_str(DEFAULT_CONFIG_STR, FileFormat::Toml))?;
     let conf: WebConfig = app.get_config()?;
     self.init_server_with_config(conf).await
+  }
+
+  #[deprecated(since = "0.2.0", note = "renamed to `serve` — this method runs the server loop, it does not build")]
+  pub async fn build(self) -> Result<(), WebError> {
+    self.serve().await
   }
 
   async fn init_server_with_config(self, conf: WebConfig) -> Result<(), WebError> {

@@ -269,7 +269,7 @@ impl ClientFactory {
 }
 
 /// Agent configuration for creating agents
-#[derive(Clone, Debug, Default, Builder)]
+#[derive(Clone, Default, Builder)]
 pub struct AgentConfig {
   #[builder(setter(into))]
   pub provider: String,
@@ -303,6 +303,24 @@ pub struct AgentConfig {
 
   #[builder(default, setter(into, strip_option))]
   pub additional_params: Option<serde_json::Value>,
+}
+
+impl std::fmt::Debug for AgentConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("AgentConfig")
+      .field("provider", &self.provider)
+      .field("model", &self.model)
+      .field("base_url", &self.base_url)
+      .field("api_key", &self.api_key.as_ref().map(|_| "<REDACTED>"))
+      .field("name", &self.name)
+      .field("description", &self.description)
+      .field("system_prompt", &self.system_prompt)
+      .field("static_context", &self.static_context)
+      .field("max_tokens", &self.max_tokens)
+      .field("temperature", &self.temperature)
+      .field("additional_params", &self.additional_params)
+      .finish()
+  }
 }
 
 impl AgentConfig {
@@ -369,7 +387,7 @@ impl ClientFactory {
 }
 
 /// Embedding configuration for creating embedding models
-#[derive(Clone, Debug, Default, Builder)]
+#[derive(Clone, Default, Builder)]
 pub struct EmbeddingConfig {
   #[builder(setter(into))]
   pub provider: String,
@@ -386,9 +404,41 @@ pub struct EmbeddingConfig {
   pub api_key: Option<String>,
 }
 
+impl std::fmt::Debug for EmbeddingConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("EmbeddingConfig")
+      .field("provider", &self.provider)
+      .field("model", &self.model)
+      .field("dims", &self.dims)
+      .field("base_url", &self.base_url)
+      .field("api_key", &self.api_key.as_ref().map(|_| "<REDACTED>"))
+      .finish()
+  }
+}
+
 impl EmbeddingConfig {
   /// Create a new embedding config
   pub fn new(provider: impl Into<String>, model: impl Into<String>, dims: usize) -> Self {
     Self { provider: provider.into(), model: model.into(), dims, base_url: None, api_key: None }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn config_debug_never_leaks_api_key() {
+    let mut agent = AgentConfig::new("openai", "gpt-x");
+    agent.api_key = Some("sk-agent-secret".into());
+    let dbg = format!("{agent:?}");
+    assert!(!dbg.contains("sk-agent-secret"), "api_key leaked: {dbg}");
+    assert!(dbg.contains("REDACTED"));
+
+    let mut embedding = EmbeddingConfig::new("openai", "text-embedding-x", 1536);
+    embedding.api_key = Some("sk-embed-secret".into());
+    let dbg = format!("{embedding:?}");
+    assert!(!dbg.contains("sk-embed-secret"), "api_key leaked: {dbg}");
+    assert!(dbg.contains("REDACTED"));
   }
 }

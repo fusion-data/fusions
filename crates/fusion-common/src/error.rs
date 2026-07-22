@@ -34,6 +34,9 @@ pub mod codes {
   // system 命名空间 - 系统内部错误
   pub const INTERNAL_ERROR: &str = "system.internal_error";
   pub const SERVICE_UNAVAILABLE: &str = "system.service_unavailable";
+  /// 功能未实现（HTTP 501 / Connect `Unimplemented`）。与 `SERVICE_UNAVAILABLE`
+  /// （503，可重试）语义区分：501 重试永远不会成功。
+  pub const NOT_IMPLEMENTED: &str = "system.not_implemented";
   pub const CONFIG_ERROR: &str = "system.config_error";
   pub const IO_ERROR: &str = "system.io_error";
 

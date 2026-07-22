@@ -114,7 +114,7 @@ impl WebError {
 
   /// 501 - 未实现
   pub fn not_implemented(msg: impl Into<Cow<'static, str>>) -> Self {
-    Self::new("system.not_implemented", msg)
+    Self::new(fusion_common::codes::NOT_IMPLEMENTED, msg)
   }
 
   /// 502 - 网关错误
@@ -159,7 +159,7 @@ impl IntoResponse for WebError {
       // not_implemented / bad_gateway / gateway_timeout 之前落入 _ → 500，与
       // builder 函数的 doc/name（501/502/504）不一致 → caller 看 500 误以为是
       // 自己服务挂了，实际是"该 RPC 未实现 / 上游网关问题"。明确映射。
-      "system.not_implemented" => StatusCode::NOT_IMPLEMENTED,
+      NOT_IMPLEMENTED => StatusCode::NOT_IMPLEMENTED,
       "system.bad_gateway" => StatusCode::BAD_GATEWAY,
       "system.gateway_timeout" => StatusCode::GATEWAY_TIMEOUT,
 

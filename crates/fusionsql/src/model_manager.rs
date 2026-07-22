@@ -8,6 +8,7 @@ use fusionsql_core::filter::FilterGroups;
 use crate::base::BmcConfig;
 use crate::config::DbConfig;
 use crate::id::Id;
+use crate::store::dbx::DbxProviderTrait;
 use crate::store::{Dbx, create_dbx};
 use crate::{Result, SqlError};
 
@@ -22,8 +23,20 @@ pub trait ModelContext: Clone + Send + Sync + 'static {
 }
 
 impl ModelContext for Ctx {
+  /// # ⚠️ 0 哨兵语义
+  ///
+  /// `Ctx` 没有 user id 时返回 `0`：`created_by` / `updated_by` 审计列会以
+  /// user 0 落库，表示「system / 未归因」写入。依赖精确归因的应用 MUST 使用
+  /// 自定义 `AppContext: ModelContext`（把 audit actor 设为必填字段），而不是
+  /// 依赖本兼容 impl；读侧可用 `created_by = 0` 识别未归因写入。
   fn audit_user_id(&self) -> Id {
-    self.get_user_id().unwrap_or(0).into()
+    match self.get_user_id() {
+      Some(user_id) => user_id.into(),
+      None => {
+        log::debug!("Ctx has no user id; audit columns fall back to sentinel user 0");
+        Id::I64(0)
+      }
+    }
   }
 
   fn req_time(&self) -> DateTime<FixedOffset> {
@@ -41,6 +54,20 @@ pub struct ModelManager<C: ModelContext = Ctx> {
   dbx: Dbx,
   ctx: Option<C>,
   filter_interceptor: Option<FilterInterceptor<C>>,
+}
+
+/// 手写 Debug：让下游 `#[derive(Debug)]` 包装 `ModelManager` 的常见写法可编译。
+/// `C: ModelContext` 不要求 `Debug`（且 ctx 可能含敏感上下文），只打印类型名；
+/// 拦截器闭包打印占位符；dbx 只打印 provider 与事务标记，避免连接细节入日志。
+impl<C: ModelContext> std::fmt::Debug for ModelManager<C> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("ModelManager")
+      .field("dbx", &self.dbx.provider())
+      .field("is_txn", &self.dbx.is_txn())
+      .field("ctx", &self.ctx.as_ref().map(|_| std::any::type_name::<C>()))
+      .field("filter_interceptor", &self.filter_interceptor.as_ref().map(|_| "<fn>"))
+      .finish()
+  }
 }
 
 impl<C> ModelManager<C>
@@ -73,7 +100,7 @@ where
   }
 
   pub fn ctx_ref(&self) -> Result<&C> {
-    self.ctx.as_ref().ok_or(SqlError::Unauthorized("The ctx of ModelManager is not set".to_string()))
+    self.ctx.as_ref().ok_or(SqlError::CtxMissing)
   }
 
   pub fn ctx_opt_ref(&self) -> Option<&C> {

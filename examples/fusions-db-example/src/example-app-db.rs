@@ -24,12 +24,12 @@ async fn main() {
   ab.add_plugin(DbPlugin);
   ab.run().await.unwrap();
   let app = Application::global();
-  let mm: ComponentArc<ModelManager> = app.get_component_arc().unwrap();
+  let mm: ComponentArc<ModelManager> = app.try_component_arc().unwrap();
 
   let addr: *const ModelManager = &*mm;
   info!("Memory address of ModelManager: {:p}", addr);
 
-  let test_svc = app.get_component_arc::<TestSvc>().unwrap();
+  let test_svc = app.try_component_arc::<TestSvc>().unwrap();
   let ret = test_svc.test().await.unwrap();
   assert_eq!(ret, "test service");
 }

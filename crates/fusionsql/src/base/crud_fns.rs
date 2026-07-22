@@ -1,9 +1,5 @@
 use sea_query::{Condition, Expr, Query, SelectStatement};
 use sea_query_binder::SqlxBinder;
-// `Row::try_get` 只在 sqlite count 分支用到；postgres 分支已改走
-// `fetch_one_scalar`（事务感知），不再需要 `Row`。
-#[cfg(feature = "with-sqlite")]
-use sqlx::Row;
 
 use fusionsql_core::filter::FilterGroups;
 
@@ -175,12 +171,12 @@ where
     #[cfg(feature = "with-sqlite")]
     Dbx::Sqlite(dbx_sqlite) => {
       let query_str = stmt.to_string(sea_query::SqliteQueryBuilder);
-      let result = sqlx::query(&query_str)
-        .fetch_one(dbx_sqlite.db())
+      // 走事务感知路径（同 Postgres 分支）：直接查池会绕过已打开的事务，
+      // file 库下与写事务锁冲突 / 读到事务前快照，`:memory:` 下各连接是
+      // 独立数据库，count 结果必然错误。
+      let (count,): (i64,) = dbx_sqlite
+        .fetch_one(sqlx::query_as(&query_str))
         .await
-        .map_err(|_| SqlError::CountFail { schema: bmc_config.schema, table: bmc_config.table })?;
-      let count: i64 = result
-        .try_get("count")
         .map_err(|_| SqlError::CountFail { schema: bmc_config.schema, table: bmc_config.table })?;
       Ok(u64::try_from(count).unwrap_or(0))
     }

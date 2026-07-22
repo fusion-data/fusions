@@ -7,6 +7,8 @@
 //! - 默认 model 名（caller 注入）
 //! - tool_calls 路径细节（基本一致；个别 vendor 用 `function_call` 旧字段，已 deprecated）
 
+use std::fmt;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use reqwest::Client as HttpClient;
@@ -24,10 +26,10 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// OpenAI 兼容 transport —— 三家共享。
 ///
-/// 所有 `with_*` builder 方法统一返回 `Self`（链式不割裂）；不持有 eager
-/// 构造的 [`HttpClient`]，仅记录 `timeout`。底层 reqwest client 延迟到首次
-/// [`chat_complete`](Self::chat_complete) 时一次性构建，构建错误在那时返回。
-#[derive(Debug, Clone)]
+/// 所有 `with_*` builder 方法统一返回 `Self`（链式不割裂）。底层 reqwest client
+/// 延迟到首次 [`chat_complete`](Self::chat_complete) 时构建并**缓存复用**（reqwest
+/// 连接池要求单例复用，否则每次请求都要重新 TCP+TLS 握手），构建错误在那时返回。
+#[derive(Clone)]
 pub struct OpenAiCompatTransport {
   base_url: String,
   api_key: String,
@@ -36,16 +38,37 @@ pub struct OpenAiCompatTransport {
   /// 额外 header（OpenAI 兼容场景下用，如 OpenAI `OpenAI-Organization`、Qwen
   /// `X-DashScope-WorkSpace`）；wire 调用时按顺序 set。
   extra_headers: Vec<(String, String)>,
+  /// 首次请求时按 `timeout` 构建后缓存；clone 共享同一连接池。
+  client: Arc<OnceLock<HttpClient>>,
+}
+
+impl fmt::Debug for OpenAiCompatTransport {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("OpenAiCompatTransport")
+      .field("base_url", &self.base_url)
+      .field("api_key", &"<REDACTED>")
+      .field("timeout", &self.timeout)
+      .field("extra_headers", &self.extra_headers.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>())
+      .finish_non_exhaustive()
+  }
 }
 
 impl OpenAiCompatTransport {
   pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Result<Self, LlmError> {
-    Ok(Self { base_url: base_url.into(), api_key: api_key.into(), timeout: DEFAULT_TIMEOUT, extra_headers: Vec::new() })
+    Ok(Self {
+      base_url: base_url.into(),
+      api_key: api_key.into(),
+      timeout: DEFAULT_TIMEOUT,
+      extra_headers: Vec::new(),
+      client: Arc::new(OnceLock::new()),
+    })
   }
 
   /// 覆盖 HTTP 超时。构建错误（如非法 timeout）推迟到首次请求时返回。
   pub fn with_timeout(mut self, timeout: Duration) -> Self {
     self.timeout = timeout;
+    // timeout 参与 client 构建：丢弃已缓存的 client，下次请求按新 timeout 重建。
+    self.client = Arc::new(OnceLock::new());
     self
   }
 
@@ -64,13 +87,18 @@ impl OpenAiCompatTransport {
     &self.base_url
   }
 
-  /// 按当前 `timeout` 构造底层 reqwest client。构建失败映射为
+  /// 取缓存的 reqwest client；首次调用按当前 `timeout` 构建。构建失败映射为
   /// [`LlmError::ConfigInvalid`]。
-  fn build_http(&self) -> Result<HttpClient, LlmError> {
-    HttpClient::builder()
+  fn http(&self) -> Result<&HttpClient, LlmError> {
+    if let Some(client) = self.client.get() {
+      return Ok(client);
+    }
+    let built = HttpClient::builder()
       .timeout(self.timeout)
       .build()
-      .map_err(|e| LlmError::ConfigInvalid(LlmProviderId::OpenAi, format!("reqwest client build failed: {e}")))
+      .map_err(|e| LlmError::ConfigInvalid(LlmProviderId::OpenAi, format!("reqwest client build failed: {e}")))?;
+    // 并发首次调用时可能重复构建，get_or_init 保证只保留一份。
+    Ok(self.client.get_or_init(|| built))
   }
 
   /// 调 `<base_url>/chat/completions`，把 OpenAI 兼容 wire 响应解析为通用
@@ -81,12 +109,15 @@ impl OpenAiCompatTransport {
     default_model: &str,
     req: ChatCompletionRequest,
   ) -> Result<ChatCompletionResponse, LlmError> {
-    let http = self.build_http()?;
+    let http = self.http()?;
     let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
     let mut body = build_request_body(default_model, &req);
     maybe_disable_thinking(&mut body, provider, req.tool_choice.as_ref());
 
     let mut builder = http.post(&url).bearer_auth(&self.api_key).json(&body);
+    if let Some(timeout) = req.timeout {
+      builder = builder.timeout(timeout);
+    }
     for (k, v) in &self.extra_headers {
       builder = builder.header(k, v);
     }
@@ -526,5 +557,24 @@ mod tests {
     let raw = r#"{ "model": "x", "choices": [] }"#;
     let parsed: WireChatCompletionResponse = serde_json::from_str(raw).unwrap();
     assert!(parsed.into_response(LlmProviderId::Qwen, "x", &ChatCompletionRequest::default()).is_none());
+  }
+
+  #[test]
+  fn debug_never_leaks_api_key() {
+    // 回归：derive(Debug) 曾把 api_key 明文打进日志（tracing::debug!(?transport)）。
+    let transport = OpenAiCompatTransport::new("https://api.example.com", "sk-super-secret").unwrap();
+    let dbg = format!("{transport:?}");
+    assert!(!dbg.contains("sk-super-secret"), "api_key leaked: {dbg}");
+    assert!(dbg.contains("<REDACTED>"));
+  }
+
+  #[test]
+  fn with_timeout_resets_cached_client() {
+    let transport = OpenAiCompatTransport::new("https://api.example.com", "k").unwrap();
+    let first = transport.http().unwrap() as *const HttpClient;
+    let second = transport.http().unwrap() as *const HttpClient;
+    assert_eq!(first, second, "client must be built once and reused");
+    let transport = transport.with_timeout(Duration::from_secs(3));
+    assert!(transport.client.get().is_none(), "timeout change must drop the cached client");
   }
 }

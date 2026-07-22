@@ -8,6 +8,31 @@ fn inject_error_tip() -> syn::Error {
   syn::Error::new(Span::call_site(), "inject Component only support Named-field Struct")
 }
 
+/// Resolve the crate base path the generated code references. Defaults to
+/// `::fusions::core` (the aggregate crate); consumers that depend on
+/// `fusion-core` directly (without the `fusions` umbrella) override it with
+/// `#[fusions(crate = "::fusion_core")]` on the deriving item.
+pub(crate) fn crate_base_path(attrs: &[Attribute]) -> syn::Result<syn::Path> {
+  for attr in attrs {
+    if attr.path().is_ident("fusions") {
+      let mut base: Option<syn::Path> = None;
+      attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("crate") {
+          let lit: syn::LitStr = meta.value()?.parse()?;
+          base = Some(lit.parse_with(syn::Path::parse_mod_style)?);
+          Ok(())
+        } else {
+          Err(meta.error("unsupported attribute; expected `#[fusions(crate = \"...\")]`"))
+        }
+      })?;
+      if let Some(base) = base {
+        return Ok(base);
+      }
+    }
+  }
+  Ok(syn::parse_quote!(::fusions::core))
+}
+
 enum InjectableType {
   Component(syn::Path),
   Config(syn::Path),
@@ -51,13 +76,15 @@ fn build_default_path() -> syn::Path {
 struct Injectable {
   pub ty: InjectableType,
   pub field_name: syn::Ident,
+  /// Crate base path (`::fusions::core` by default) for generated absolute paths.
+  pub base: syn::Path,
 }
 
 impl Injectable {
-  fn new(field: syn::Field) -> syn::Result<Self> {
+  fn new(field: syn::Field, base: syn::Path) -> syn::Result<Self> {
     let syn::Field { ident, ty, attrs, .. } = field;
     let type_path = if let syn::Type::Path(path) = ty { path.path } else { Err(inject_error_tip())? };
-    Ok(Self { ty: Self::compute_type(attrs, type_path)?, field_name: ident.ok_or_else(inject_error_tip)? })
+    Ok(Self { ty: Self::compute_type(attrs, type_path)?, field_name: ident.ok_or_else(inject_error_tip)?, base })
   }
 
   fn compute_type(attrs: Vec<Attribute>, ty: syn::Path) -> syn::Result<InjectableType> {
@@ -95,7 +122,7 @@ impl Injectable {
 
 impl ToTokens for Injectable {
   fn to_tokens(&self, tokens: &mut TokenStream) {
-    let Self { ty, field_name } = self;
+    let Self { ty, field_name, base } = self;
     match ty {
       InjectableType::Component(type_path) => tokens.extend(quote! {
         #field_name: app.component::<#type_path>()
@@ -104,13 +131,13 @@ impl ToTokens for Injectable {
         #field_name: app.get_config::<#type_path>()?
       }),
       InjectableType::ComponentArc(type_path) => tokens.extend(quote! {
-        #field_name: match app.get_component_ref::<#type_path>() {
+        #field_name: match app.try_component_arc::<#type_path>() {
           Ok(c) => c,
           Err(e) => panic!("ComponentArc not found, field_name: {}, type_path: {}, error: {e}", stringify!(#field_name), stringify!(#type_path)),
         }
       }),
       InjectableType::ConfigArc(type_path) => tokens.extend(quote! {
-        #field_name: ::fusions::core::config::ConfigArc::new(app.get_config::<#type_path>()?)
+        #field_name: #base::config::ConfigArc::new(app.get_config::<#type_path>()?)
       }),
       InjectableType::Default => tokens.extend(quote! {
         #field_name: Default::default()
@@ -124,8 +151,11 @@ struct ComponentToTokens {
 }
 
 impl ComponentToTokens {
-  fn new(fields: syn::Fields) -> syn::Result<Self> {
-    let fields = fields.into_iter().map(Injectable::new).collect::<syn::Result<Vec<_>>>()?;
+  fn new(fields: syn::Fields, base: &syn::Path) -> syn::Result<Self> {
+    let fields = fields
+      .into_iter()
+      .map(|field| Injectable::new(field, base.clone()))
+      .collect::<syn::Result<Vec<_>>>()?;
     Ok(Self { fields })
   }
 }
@@ -142,8 +172,9 @@ impl ToTokens for ComponentToTokens {
 }
 
 pub(crate) fn expand_derive(input: syn::DeriveInput) -> syn::Result<TokenStream> {
+  let base = crate_base_path(&input.attrs)?;
   let component = if let syn::Data::Struct(data) = input.data {
-    ComponentToTokens::new(data.fields)?
+    ComponentToTokens::new(data.fields, &base)?
   } else {
     return Err(inject_error_tip());
   };
@@ -161,9 +192,9 @@ pub(crate) fn expand_derive(input: syn::DeriveInput) -> syn::Result<TokenStream>
     .collect();
 
   let token_stream = quote! {
-    impl ::fusions::core::component::Component for #ident {
-      fn build(app: &::fusions::core::application::ApplicationBuilder) -> ::fusions::core::Result<Self> {
-        use ::fusions::core::configuration::ConfigRegistry;
+    impl #base::component::Component for #ident {
+      fn build(app: &#base::application::ApplicationBuilder) -> #base::Result<Self> {
+        use #base::configuration::ConfigRegistry;
         Ok(#component)
       }
     }
@@ -171,16 +202,16 @@ pub(crate) fn expand_derive(input: syn::DeriveInput) -> syn::Result<TokenStream>
     #[allow(non_camel_case_types)]
     struct #component_registrar;
 
-    impl ::fusions::core::component::ComponentInstaller for #component_registrar {
+    impl #base::component::ComponentInstaller for #component_registrar {
       fn dependencies(&self) -> Vec<&str> {
         vec![#(std::any::type_name::<#dependencies>()),*]
       }
 
-      fn install_component(&self, app: &mut ::fusions::core::application::ApplicationBuilder)->::fusions::core::Result<()> {
-        use ::fusions::core::component::Component;
+      fn install_component(&self, app: &mut #base::application::ApplicationBuilder)-> #base::Result<()> {
+        use #base::component::Component;
         let component = #ident::build(app)?;
         app.try_add_component(component).map_err(|e| {
-          ::fusions::core::CoreError::custom(format!(
+          #base::CoreError::custom(format!(
             "failed to register component `{}`: {e}",
             std::any::type_name::<#ident>(),
           ))
@@ -188,7 +219,9 @@ pub(crate) fn expand_derive(input: syn::DeriveInput) -> syn::Result<TokenStream>
         Ok(())
       }
     }
-    ::fusions::core::submit_component!(#component_registrar);
+    #base::component::submit! {
+      &(#component_registrar) as &dyn #base::component::ComponentInstaller
+    }
   };
 
   let output = token_stream;

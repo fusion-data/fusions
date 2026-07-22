@@ -69,12 +69,14 @@ pub trait ComponentInstaller: Send + Sync + 'static {
 
 inventory::collect!(&'static dyn ComponentInstaller);
 
-/// auto_config
+/// Register a [`ComponentInstaller`] with the inventory so
+/// [`auto_inject_component`] discovers it. `$crate` keeps the expansion
+/// resolvable no matter how the consumer names or re-exports this crate.
 #[macro_export]
 macro_rules! submit_component {
   ($ty:tt) => {
-    ::fusions::core::component::submit! {
-      &($ty) as &dyn ::fusions::core::component::ComponentInstaller
+    $crate::component::submit! {
+      &($ty) as &dyn $crate::component::ComponentInstaller
     }
   };
 }

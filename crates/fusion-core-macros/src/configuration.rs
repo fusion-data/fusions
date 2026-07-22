@@ -2,11 +2,12 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
 pub(crate) fn expand_derive(input: syn::DeriveInput) -> syn::Result<TokenStream> {
+  let base = crate::inject::crate_base_path(&input.attrs)?;
   let prefix = get_prefix(&input)?;
   let ident = input.ident;
 
   let output = quote! {
-      impl ::fusions::core::configuration::Configurable for #ident {
+      impl #base::configuration::Configurable for #ident {
         fn config_prefix() -> &'static str {
           #prefix
         }

@@ -9,7 +9,7 @@ use config::Config;
 use dashmap::DashMap;
 use fusion_common::ahash::HashSet;
 use fusion_common::time::OffsetDateTime;
-use log::{debug, info};
+use log::{debug, error, info};
 use mea::{
   mutex::Mutex,
   shutdown::{ShutdownRecv, ShutdownSend},
@@ -34,6 +34,9 @@ pub(crate) struct ApplicationInner {
   components: Registry<DynComponentArc>,
   start_time: OffsetDateTime,
   pub(crate) shutdown: Mutex<Option<(ShutdownSend, ShutdownRecv)>>,
+  /// Hooks registered via [`ApplicationBuilder::add_shutdown_hook`]; drained and
+  /// executed (in registration order) by [`Application::await_shutdown`].
+  shutdown_hooks: Mutex<Vec<Box<Task<String>>>>,
 }
 
 /// Application, clone is cheap.
@@ -43,6 +46,18 @@ pub struct Application(pub(crate) Arc<ApplicationInner>);
 impl Display for Application {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "Application({}|{})", self.fusion_setting().app().name(), self.0.start_time)
+  }
+}
+
+/// 手写 Debug：让下游 `#[derive(Debug)]` 包装 `Application` 的常见写法可编译。
+/// 只打印应用名 / 启动时间 / 组件数，不递归 dump 组件与配置内容。
+impl std::fmt::Debug for Application {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("Application")
+      .field("name", &self.fusion_setting().app().name())
+      .field("start_time", &self.0.start_time)
+      .field("components", &self.0.components.len())
+      .finish_non_exhaustive()
   }
 }
 
@@ -83,9 +98,23 @@ impl Application {
     if let Some((shutdown_tx, shutdown_rx)) = app.0.shutdown.lock().await.take() {
       drop(shutdown_rx);
       shutdown_tx.await_shutdown().await;
+      app.run_shutdown_hooks().await;
       true
     } else {
       false
+    }
+  }
+
+  /// Drain and run the shutdown hooks registered on the builder, in
+  /// registration order. A failing hook is logged and does not prevent the
+  /// remaining hooks from running.
+  async fn run_shutdown_hooks(&self) {
+    let hooks = std::mem::take(&mut *self.0.shutdown_hooks.lock().await);
+    for hook in hooks {
+      match Box::into_pin(hook(self.clone())).await {
+        Ok(name) => info!("shutdown hook completed: {name}"),
+        Err(e) => error!("shutdown hook failed: {e}"),
+      }
     }
   }
 
@@ -104,27 +133,49 @@ impl Application {
     &self.0.config_registry
   }
 
-  /// Get the component reference of the specified type
+  // -- Component access -----------------------------------------------------
+  // Two return shapes, each with a panicking / fallible pair:
+  //   cloned `T`:            `component`     / `try_component`
+  //   shared `ComponentArc`: `component_arc` / `try_component_arc`
+  // Panicking variants are for startup wiring where a missing component is a
+  // programming error; `try_*` variants are for optional lookups.
+
+  /// Get a shared reference to the component of the specified type.
+  /// Fallible counterpart of [`Self::component_arc`].
+  #[inline]
+  pub fn try_component_arc<T>(&self) -> ComponentResult<ComponentArc<T>>
+  where
+    T: Any + Send + Sync,
+  {
+    self.try_component_arc_by_name(std::any::type_name::<T>())
+  }
+
+  #[deprecated(since = "0.2.0", note = "renamed to `try_component_arc`")]
   #[inline]
   pub fn get_component_arc<T>(&self) -> ComponentResult<ComponentArc<T>>
   where
     T: Any + Send + Sync,
   {
-    self.get_component_ref_by_name(std::any::type_name::<T>())
+    self.try_component_arc()
   }
 
+  /// Get a shared reference to the component of the specified type.
+  /// **Panics** when the component is missing or of a mismatched type — use
+  /// [`Self::try_component_arc`] for fallible lookup.
+  #[track_caller]
   pub fn component_arc<T>(&self) -> ComponentArc<T>
   where
     T: Any + Send + Sync,
   {
-    let component_name = std::any::type_name::<T>();
-    match self.get_component_ref_by_name(component_name) {
+    match self.try_component_arc() {
       Ok(c) => c,
       Err(e) => panic!("{e}"),
     }
   }
 
-  pub fn get_component_ref_by_name<T>(&self, component_name: &str) -> ComponentResult<ComponentArc<T>>
+  /// Get a shared reference to the component registered under `component_name`
+  /// (the component's full type path). Fallible.
+  pub fn try_component_arc_by_name<T>(&self, component_name: &str) -> ComponentResult<ComponentArc<T>>
   where
     T: Any + Send + Sync,
   {
@@ -136,28 +187,53 @@ impl Application {
     component_ref.downcast::<T>()
   }
 
+  #[deprecated(since = "0.2.0", note = "renamed to `try_component_arc_by_name`")]
+  pub fn get_component_ref_by_name<T>(&self, component_name: &str) -> ComponentResult<ComponentArc<T>>
+  where
+    T: Any + Send + Sync,
+  {
+    self.try_component_arc_by_name(component_name)
+  }
+
+  /// Get a clone of the component of the specified type. **Panics** when the
+  /// component is missing or of a mismatched type — use [`Self::try_component`]
+  /// for fallible lookup.
+  #[track_caller]
   pub fn component<T>(&self) -> T
   where
     T: Clone + Send + Sync + 'static,
   {
-    match self.get_component() {
+    match self.try_component() {
       Ok(c) => c,
       Err(e) => panic!("{e}"),
     }
   }
 
-  /// Get the component of the specified type
+  /// Get a clone of the component of the specified type.
+  /// Fallible counterpart of [`Self::component`].
+  pub fn try_component<T>(&self) -> ComponentResult<T>
+  where
+    T: Clone + Send + Sync + 'static,
+  {
+    self.try_component_arc().map(|c| T::clone(&c))
+  }
+
+  #[deprecated(since = "0.2.0", note = "renamed to `try_component`")]
   pub fn get_component<T>(&self) -> ComponentResult<T>
   where
     T: Clone + Send + Sync + 'static,
   {
-    let component_ref = self.get_component_arc();
-    component_ref.map(|c| T::clone(&c))
+    self.try_component()
   }
 
   /// Get all built components. The return value is the full crate path of all components
-  pub fn get_component_names(&self) -> Vec<String> {
+  pub fn component_names(&self) -> Vec<String> {
     self.0.components.iter().map(|e| e.key().clone()).collect()
+  }
+
+  #[deprecated(since = "0.2.0", note = "renamed to `component_names`")]
+  pub fn get_component_names(&self) -> Vec<String> {
+    self.component_names()
   }
 
   /// Register a component as a long-lived singleton. **Panics** when `T` is
@@ -246,27 +322,54 @@ impl ApplicationBuilder {
     self.config_registry.fusion_setting()
   }
 
-  pub fn with_config_registry(&mut self, config_registry: FusionConfigRegistry) -> &Self {
+  pub fn with_config_registry(&mut self, config_registry: FusionConfigRegistry) -> &mut Self {
     self.config_registry = config_registry;
     self
   }
 
-  /// add Config Source
+  /// Append a config source. **Panics** when the source cannot be merged — use
+  /// [`Self::try_add_config_source`] for fallible registration.
+  #[track_caller]
   pub fn add_config_source<T>(&mut self, source: T) -> &mut Self
   where
     T: config::Source + Send + Sync + 'static,
   {
-    self.config_registry.append_config_source(source).expect("Add config source failed");
+    if let Err(e) = self.try_add_config_source(source) {
+      panic!("Add config source failed: {e}");
+    }
     self
   }
 
+  /// Fallible counterpart of [`Self::add_config_source`].
+  pub fn try_add_config_source<T>(&mut self, source: T) -> ConfigureResult<&mut Self>
+  where
+    T: config::Source + Send + Sync + 'static,
+  {
+    self.config_registry.append_config_source(source)?;
+    Ok(self)
+  }
+
   /// Prepend a config source so it only fills in missing keys (does not override user config).
+  /// **Panics** when the source cannot be merged — use
+  /// [`Self::try_prepend_config_source`] for fallible registration.
+  #[track_caller]
   pub fn prepend_config_source<T>(&mut self, source: T) -> &mut Self
   where
     T: config::Source + Send + Sync + 'static,
   {
-    self.config_registry.prepend_config_source(source).expect("Prepend config source failed");
+    if let Err(e) = self.try_prepend_config_source(source) {
+      panic!("Prepend config source failed: {e}");
+    }
     self
+  }
+
+  /// Fallible counterpart of [`Self::prepend_config_source`].
+  pub fn try_prepend_config_source<T>(&mut self, source: T) -> ConfigureResult<&mut Self>
+  where
+    T: config::Source + Send + Sync + 'static,
+  {
+    self.config_registry.prepend_config_source(source)?;
+    Ok(self)
   }
 
   /// add plugin
@@ -320,8 +423,8 @@ impl ApplicationBuilder {
     Ok(self)
   }
 
-  /// Get the component of the specified type
-  pub fn get_component_ref<T>(&self) -> ComponentResult<ComponentArc<T>>
+  /// Get a shared reference to the component of the specified type. Fallible.
+  pub fn try_component_arc<T>(&self) -> ComponentResult<ComponentArc<T>>
   where
     T: Any + Send + Sync,
   {
@@ -334,26 +437,48 @@ impl ApplicationBuilder {
     component_ref.downcast::<T>()
   }
 
+  #[deprecated(since = "0.2.0", note = "renamed to `try_component_arc`")]
+  pub fn get_component_ref<T>(&self) -> ComponentResult<ComponentArc<T>>
+  where
+    T: Any + Send + Sync,
+  {
+    self.try_component_arc()
+  }
+
+  /// Get a clone of the component of the specified type. **Panics** when the
+  /// component is missing — use [`Self::try_component`] for fallible lookup.
+  #[track_caller]
   pub fn component<T>(&self) -> T
   where
     T: Clone + Send + Sync + 'static,
   {
-    match self.get_component() {
+    match self.try_component() {
       Ok(c) => c,
       Err(e) => panic!("{e}"),
     }
   }
 
-  /// get cloned component
+  /// Get a clone of the component of the specified type.
+  /// Fallible counterpart of [`Self::component`].
+  pub fn try_component<T>(&self) -> ComponentResult<T>
+  where
+    T: Clone + Send + Sync + 'static,
+  {
+    self.try_component_arc().map(|c| T::clone(&c))
+  }
+
+  #[deprecated(since = "0.2.0", note = "renamed to `try_component`")]
   pub fn get_component<T>(&self) -> ComponentResult<T>
   where
     T: Clone + Send + Sync + 'static,
   {
-    let component_ref = self.get_component_ref();
-    component_ref.map(|c| T::clone(&c))
+    self.try_component()
   }
 
-  /// Add a shutdown hook
+  /// Add a shutdown hook. Hooks run in registration order inside
+  /// [`Application::await_shutdown`], after the shutdown signal has been
+  /// processed by all subsystems. If the process never calls
+  /// `await_shutdown`, hooks do not run.
   pub fn add_shutdown_hook<T>(&mut self, hook: T) -> &mut Self
   where
     T: FnOnce(Application) -> Box<dyn Future<Output = Result<String>> + Send> + Send + 'static,
@@ -433,6 +558,7 @@ impl ApplicationBuilder {
   fn build_application(&mut self) -> Application {
     let components = std::mem::take(&mut self.components);
     let configuration_state = std::mem::take(&mut self.config_registry);
+    let shutdown_hooks = std::mem::take(&mut self.shutdown_hooks);
     let init_time = configuration_state.fusion_setting().app().time_now();
     let shutdown = Mutex::new(Some(mea::shutdown::new_pair()));
     Application(Arc::new(ApplicationInner {
@@ -440,6 +566,7 @@ impl ApplicationBuilder {
       components,
       start_time: init_time,
       shutdown,
+      shutdown_hooks: Mutex::new(shutdown_hooks),
     }))
   }
 }

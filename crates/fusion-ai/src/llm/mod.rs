@@ -173,8 +173,8 @@ pub struct ChatCompletionRequest {
   pub tool_choice: Option<ToolChoice>,
   /// None = 不下发字段（用 vendor 默认）
   pub temperature: Option<f32>,
-  /// None = 用 transport 默认 timeout；Some = 单请求覆盖（reqwest 不支持
-  /// 单请求 timeout 时由 wire 层兜底，复用 client builder timeout）
+  /// None = 用 transport 默认 timeout；Some = 单请求覆盖（wire 层经
+  /// `RequestBuilder::timeout` 下发，覆盖 client 默认值）
   pub timeout: Option<Duration>,
 }
 

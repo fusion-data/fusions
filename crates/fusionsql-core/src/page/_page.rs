@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 pub use super::*;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+// 与响应侧 `Paged` / `PageResult` / `OrderBy(s)` 统一 camelCase wire 契约；
+// `alias` 兼容旧 snake_case 入参。
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "with-openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(target_arch = "wasm32", derive(tsify::Tsify), tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Page {
@@ -13,6 +16,7 @@ pub struct Page {
   /// 指定返回的偏移量
   pub offset: Option<u64>,
   /// 指定返回的排序
+  #[serde(alias = "order_bys")]
   pub order_bys: Option<OrderBys>,
 }
 
@@ -69,5 +73,28 @@ impl From<OrderBy> for Page {
 impl From<OrderBy> for Option<Page> {
   fn from(val: OrderBy) -> Self {
     Some(Page { order_bys: Some(OrderBys::from(val)), ..Default::default() })
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn page_serializes_camel_case_like_sibling_response_types() {
+    // 回归：请求侧 Page 曾是 snake_case（order_bys），与响应侧 Paged/PageResult
+    // 的 camelCase（hasMore）在同一模块内不一致，前端要分别特判。
+    let page = Page { order_bys: Some(OrderBys::from(OrderBy::from("id"))), ..Default::default() };
+    let json = serde_json::to_value(&page).unwrap();
+    assert!(json.get("orderBys").is_some(), "must serialize camelCase: {json}");
+    assert!(json.get("order_bys").is_none());
+  }
+
+  #[test]
+  fn page_still_accepts_legacy_snake_case_input() {
+    let page: Page = serde_json::from_str(r#"{"page":1,"limit":20,"order_bys":["id"]}"#).unwrap();
+    assert!(page.order_bys.is_some());
+    let page: Page = serde_json::from_str(r#"{"page":1,"limit":20,"orderBys":["id"]}"#).unwrap();
+    assert!(page.order_bys.is_some());
   }
 }

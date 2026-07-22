@@ -40,14 +40,36 @@ impl DashScopeRegion {
 }
 
 /// DashScope 凭据。`api_key` 从 `DASHSCOPE_API_KEY` 环境变量读取。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DashScopeCredentials {
   pub api_key: String,
   pub workspace_id: Option<String>,
 }
 
+impl std::fmt::Debug for DashScopeCredentials {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("DashScopeCredentials")
+      .field("api_key", &"<REDACTED>")
+      .field("workspace_id", &self.workspace_id)
+      .finish()
+  }
+}
+
 impl DashScopeCredentials {
   pub fn from_env() -> Result<Self, std::env::VarError> {
     Ok(Self { api_key: env::var("DASHSCOPE_API_KEY")?, workspace_id: env::var("DASHSCOPE_WORKSPACE_ID").ok() })
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn debug_never_leaks_api_key() {
+    let creds = DashScopeCredentials { api_key: "sk-dash-secret".into(), workspace_id: Some("ws-1".into()) };
+    let dbg = format!("{creds:?}");
+    assert!(!dbg.contains("sk-dash-secret"), "api_key leaked: {dbg}");
+    assert!(dbg.contains("<REDACTED>") && dbg.contains("ws-1"));
   }
 }

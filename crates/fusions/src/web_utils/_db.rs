@@ -7,7 +7,7 @@ pub fn extract_model_manager(
   use crate::web::{WebError, extensions_2_ctx};
   let ctx = extensions_2_ctx(parts)?;
   let mm = state
-    .get_component::<fusion_db::ModelManager>()
+    .try_component::<fusion_db::ModelManager>()
     .map_err(|_| WebError::server_error("Failed to get ModelManager"))?
     .with_ctx(ctx.clone());
   Ok(mm)

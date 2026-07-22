@@ -17,11 +17,18 @@ pub(crate) fn derive_fields_inner(input: TokenStream) -> TokenStream {
 
   // -- Collect Elements
   // Properties for all fields (with potential additional info with #[field(...)])
-  let fusionsql_fields_and_skips = get_fusionsql_field_props_and_skips(fields);
+  // 属性写错时发正常编译诊断，而不是 "proc-macro panicked"（无 span、难定位）
+  let fusionsql_fields_and_skips = match get_fusionsql_field_props_and_skips(fields) {
+    Ok(v) => v,
+    Err(err) => return err.to_compile_error().into(),
+  };
   let field_props = fusionsql_fields_and_skips.fusionsql_fields; //fusionsql_field::get_fusionsql_field_props(fields);
   let field_mask_field = fusionsql_fields_and_skips.field_mask_field;
 
-  let struct_fusionsql_prop = get_struct_fusionsql_props(&ast).unwrap();
+  let struct_fusionsql_prop = match get_struct_fusionsql_props(&ast) {
+    Ok(props) => props,
+    Err(err) => return err.to_compile_error().into(),
+  };
 
   // Will be "" if none (this if for the struct #[fusionsql(table = ...)])
 
@@ -95,7 +102,7 @@ fn impl_has_fields(
     } else {
       quote! { None }
     };
-    quote! {&fusionsql::field::FieldRef{rel: #rel, name: #name}}
+    quote! {&::fusionsql::field::FieldRef{rel: #rel, name: #name}}
   });
 
   // -- Build the FieldMeta quotes
@@ -132,7 +139,7 @@ fn impl_has_fields(
     };
     let is_option = field_prop.is_option;
 
-    quote! {&fusionsql::field::FieldMeta{
+    quote! {&::fusionsql::field::FieldMeta{
         rel: #rel,
         is_struct_rel: #is_struct_rel,
         prop_name: #prop_name,
@@ -145,7 +152,7 @@ fn impl_has_fields(
 
   let output = quote! {
 
-    impl fusionsql::field::HasFields for #struct_name {
+    impl ::fusionsql::field::HasFields for #struct_name {
 
       fn field_names() -> &'static [&'static str] {
         &[#(
@@ -156,18 +163,18 @@ fn impl_has_fields(
       // `field_refs` / `FieldRef` 已 `#[deprecated]`，派生宏生成的 impl 仍需
       // 引用它们 —— 加 `#[allow(deprecated)]` 避免污染下游编译输出的警告。
       #[allow(deprecated)]
-      fn field_refs() -> &'static [&'static fusionsql::field::FieldRef] {
+      fn field_refs() -> &'static [&'static ::fusionsql::field::FieldRef] {
         &[#(
         #props_field_refs,
         )*]
       }
 
-      fn field_metas() -> &'static fusionsql::field::FieldMetas {
-        static METAS: &[&fusionsql::field::FieldMeta] = &[#(
+      fn field_metas() -> &'static ::fusionsql::field::FieldMetas {
+        static METAS: &[&::fusionsql::field::FieldMeta] = &[#(
         #props_field_metas,
         )*];
 
-        static METAS_HOLDER: fusionsql::field::FieldMetas = fusionsql::field::FieldMetas::new(METAS);
+        static METAS_HOLDER: ::fusionsql::field::FieldMetas = ::fusionsql::field::FieldMetas::new(METAS);
 
         &METAS_HOLDER
       }
@@ -180,9 +187,9 @@ fn impl_has_fields(
 
 fn field_options_quote(mfield_prop: &ModelsqlFieldProp) -> proc_macro2::TokenStream {
   if let Some(cast_as) = &mfield_prop.cast_as {
-    quote! { fusionsql::field::FieldOptions { cast_as: Some(#cast_as.to_string()) } }
+    quote! { ::fusionsql::field::FieldOptions { cast_as: Some(#cast_as.to_string()) } }
   } else {
-    quote! { fusionsql::field::FieldOptions { cast_as: None } }
+    quote! { ::fusionsql::field::FieldOptions { cast_as: None } }
   }
 }
 
@@ -213,7 +220,7 @@ fn impl_has_sea_fields(
 
     quote! {
       ff.push(
-        fusionsql::field::SeaField::new_with_options(fusionsql::SIden(#name), self.#ident.into(), #field_options_q)
+        ::fusionsql::field::SeaField::new_with_options(::fusionsql::SIden(#name), self.#ident.into(), #field_options_q)
       );
     }
   });
@@ -228,14 +235,14 @@ fn impl_has_sea_fields(
       quote! {
         if let Some(val) = self.#ident {
           ff.push(
-            fusionsql::field::SeaField::new_with_options(fusionsql::SIden(#name), val.into(), #field_options_q)
+            ::fusionsql::field::SeaField::new_with_options(::fusionsql::SIden(#name), val.into(), #field_options_q)
           );
         }
       }
     } else {
       quote! {
         ff.push(
-          fusionsql::field::SeaField::new_with_options(fusionsql::SIden(#name), self.#ident.into(), #field_options_q)
+          ::fusionsql::field::SeaField::new_with_options(::fusionsql::SIden(#name), self.#ident.into(), #field_options_q)
         );
       }
     }
@@ -256,7 +263,7 @@ fn impl_has_sea_fields(
     let create_field_expr = |value_expr: proc_macro2::TokenStream| {
       quote! {
         ff.push(
-          fusionsql::field::SeaField::new_with_options(fusionsql::SIden(#name), #value_expr.into(), #field_options_q)
+          ::fusionsql::field::SeaField::new_with_options(::fusionsql::SIden(#name), #value_expr.into(), #field_options_q)
         );
       }
     };
@@ -305,36 +312,36 @@ fn impl_has_sea_fields(
   // -- Compose the final code
   let output = quote! {
 
-    impl fusionsql::field::HasSeaFields for #struct_name {
+    impl ::fusionsql::field::HasSeaFields for #struct_name {
 
-      fn not_none_sea_fields(self) -> fusionsql::field::SeaFields {
-        let mut ff: Vec<fusionsql::field::SeaField> = Vec::new();
+      fn not_none_sea_fields(self) -> ::fusionsql::field::SeaFields {
+        let mut ff: Vec<::fusionsql::field::SeaField> = Vec::new();
         #(#not_none_fields_quotes)*
-        fusionsql::field::SeaFields::new(ff)
+        ::fusionsql::field::SeaFields::new(ff)
       }
 
-      fn sea_fields_with_mask(self) -> fusionsql::field::SeaFields {
-        let mut ff: Vec<fusionsql::field::SeaField> = Vec::new();
+      fn sea_fields_with_mask(self) -> ::fusionsql::field::SeaFields {
+        let mut ff: Vec<::fusionsql::field::SeaField> = Vec::new();
         #(#sea_fields_with_mask_quotes)*
-        fusionsql::field::SeaFields::new(ff)
+        ::fusionsql::field::SeaFields::new(ff)
       }
 
-      fn all_sea_fields(self) -> fusionsql::field::SeaFields {
-        let mut ff: Vec<fusionsql::field::SeaField> = Vec::new();
+      fn all_sea_fields(self) -> ::fusionsql::field::SeaFields {
+        let mut ff: Vec<::fusionsql::field::SeaField> = Vec::new();
         #(#all_fields_quotes)*
-        fusionsql::field::SeaFields::new(ff)
+        ::fusionsql::field::SeaFields::new(ff)
       }
 
-      fn sea_idens() -> Vec<sea_query::SeaRc<dyn sea_query::Iden>> {
+      fn sea_idens() -> Vec<::fusionsql::sea_query::SeaRc<dyn ::fusionsql::sea_query::Iden>> {
         vec![#(
-        sea_query::IntoIden::into_iden(fusionsql::SIden(#prop_all_names)),
+        ::fusionsql::sea_query::IntoIden::into_iden(::fusionsql::SIden(#prop_all_names)),
         )*]
       }
 
-      fn sea_column_refs() -> Vec<sea_query::ColumnRef> {
-        use sea_query::IntoIden;
-        use sea_query::ColumnRef;
-        use fusionsql::SIden;
+      fn sea_column_refs() -> Vec<::fusionsql::sea_query::ColumnRef> {
+        use ::fusionsql::sea_query::IntoIden;
+        use ::fusionsql::sea_query::ColumnRef;
+        use ::fusionsql::SIden;
 
         let mut v = Vec::new();
 
@@ -352,10 +359,10 @@ fn impl_has_sea_fields(
         v
       }
 
-      fn sea_column_refs_with_rel(rel_iden: impl sea_query::IntoIden) -> Vec<sea_query::ColumnRef> {
-        use sea_query::IntoIden;
-        use sea_query::ColumnRef;
-        use fusionsql::SIden;
+      fn sea_column_refs_with_rel(rel_iden: impl ::fusionsql::sea_query::IntoIden) -> Vec<::fusionsql::sea_query::ColumnRef> {
+        use ::fusionsql::sea_query::IntoIden;
+        use ::fusionsql::sea_query::ColumnRef;
+        use ::fusionsql::SIden;
 
         let rel_iden = rel_iden.into_iden();
 

@@ -54,6 +54,13 @@ pub enum SqlError {
   #[error("Can't create ModelManagerProvider. provider: {0}")]
   CantCreateModelManagerProvider(String),
 
+  /// The `ModelManager` was used for a context-dependent operation (create /
+  /// update / delete audit columns, filter interceptor, …) without a ctx
+  /// attached. This is a wiring bug in the caller, not an authentication
+  /// failure: call `with_ctx(...)` before write ops.
+  #[error("ModelManager has no ctx; call `with_ctx(...)` before context-dependent operations")]
+  CtxMissing,
+
   #[error(transparent)]
   IntoSeaError(#[from] IntoSeaError),
 

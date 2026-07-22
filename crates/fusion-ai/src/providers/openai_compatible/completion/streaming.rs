@@ -193,7 +193,13 @@ where
                               // Complete tool call
                               else {
                                   let id = tool_call.id.clone().unwrap_or_default();
-                                  let name = function.name.expect("tool call should have a name");
+                                  // Non-conformant providers may emit a chunk with neither
+                                  // name nor arguments (e.g. `{"function":{}}`); skip instead
+                                  // of panicking the stream task.
+                                  let Some(name) = function.name else {
+                                      debug!("Tool call chunk missing name and arguments; skipping");
+                                      continue;
+                                  };
                                   let arguments = function.arguments;
                                   let Ok(arguments) = serde_json::from_str(&arguments) else {
                                       debug!("Couldn't serialize '{arguments}' as JSON");

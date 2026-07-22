@@ -54,6 +54,7 @@ tokio-tungstenite = { workspace = true, default-features = true, features = [
   "handshake",
   "rustls-tls-native-roots",
 ] }
+tokio-util = { workspace = true }
 anyhow = { workspace = true }
 url = { workspace = true }
 

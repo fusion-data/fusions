@@ -12,7 +12,7 @@ use crate::factory::{ClientFactory, EmbeddingConfig as FactoryEmbeddingConfig, F
 /// This is a simpler config that uses the factory pattern internally.
 ///
 /// For more control, use [`factory::EmbeddingConfig`] directly.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, Builder)]
+#[derive(Clone, Default, Deserialize, Serialize, Builder)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingConfig {
   #[builder(setter(into))]
@@ -28,6 +28,18 @@ pub struct EmbeddingConfig {
 
   #[builder(default, setter(into, strip_option))]
   pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for EmbeddingConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("EmbeddingConfig")
+      .field("provider", &self.provider)
+      .field("model", &self.model)
+      .field("dims", &self.dims)
+      .field("base_url", &self.base_url)
+      .field("api_key", &self.api_key.as_ref().map(|_| "<REDACTED>"))
+      .finish()
+  }
 }
 
 impl From<EmbeddingConfig> for FactoryEmbeddingConfig {

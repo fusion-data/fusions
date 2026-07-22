@@ -42,8 +42,8 @@ pub fn new_sqlite_pool_from_config(c: &DbConfig, _application_name: Option<&str>
   }
   trace!("Sqlite connection options are: {:?}", pool_opts);
 
-  let mut conn_opts: SqliteConnectOptions =
-    if let Some(url) = c.url() { url.parse().unwrap() } else { Default::default() };
+  // 非法 `fusion.db.url` 走 Result 返回配置错误（对齐 dbx_postgres 路径），不 panic 进程
+  let mut conn_opts: SqliteConnectOptions = if let Some(url) = c.url() { url.parse()? } else { Default::default() };
   conn_opts = conn_opts.log_statements(LevelFilter::Debug);
 
   let pool = pool_opts.connect_lazy_with(conn_opts);

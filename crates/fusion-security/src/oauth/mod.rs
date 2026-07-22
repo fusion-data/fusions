@@ -161,9 +161,13 @@ fn now_unix_secs() -> u64 {
 }
 
 impl OAuthTokenResponse {
-  /// 获取令牌过期时间戳（秒）
+  /// 获取令牌过期时间戳（秒）。
+  ///
+  /// `expires_in` 来自 OAuth provider 响应（半可信输入）：恶意 / 出错的
+  /// provider 返回超大值时用 `saturating_add` 钳制，避免 debug 溢出 panic /
+  /// release 回绕成过去时间。
   pub fn expires_at(&self) -> Option<u64> {
-    self.expires_in.map(|duration| now_unix_secs() + duration)
+    self.expires_in.map(|duration| now_unix_secs().saturating_add(duration))
   }
 
   /// 检查令牌是否已过期或即将过期（提前30秒）
@@ -171,7 +175,7 @@ impl OAuthTokenResponse {
     if let Some(expires_at) = self.expires_at() {
       let now = now_unix_secs();
       // 提前30秒判断为即将过期
-      now + 30 >= expires_at
+      now.saturating_add(30) >= expires_at
     } else {
       // 如果没有过期时间信息，假设不会过期
       false

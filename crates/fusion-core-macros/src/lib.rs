@@ -9,7 +9,11 @@ mod configuration;
 mod inject;
 
 /// Configuration
-#[proc_macro_derive(Configuration, attributes(config_prefix))]
+///
+/// Generated code references `::fusions::core` by default; add
+/// `#[fusions(crate = "::fusion_core")]` when depending on `fusion-core`
+/// directly without the `fusions` umbrella crate.
+#[proc_macro_derive(Configuration, attributes(config_prefix, fusions))]
 pub fn derive_configuration(input: TokenStream) -> TokenStream {
   let input = syn::parse_macro_input!(input as DeriveInput);
 
@@ -17,7 +21,11 @@ pub fn derive_configuration(input: TokenStream) -> TokenStream {
 }
 
 /// Injectable Component
-#[proc_macro_derive(Component, attributes(config, component))]
+///
+/// Generated code references `::fusions::core` by default; add
+/// `#[fusions(crate = "::fusion_core")]` when depending on `fusion-core`
+/// directly without the `fusions` umbrella crate.
+#[proc_macro_derive(Component, attributes(config, component, fusions))]
 pub fn derive_component(input: TokenStream) -> TokenStream {
   let input = syn::parse_macro_input!(input as DeriveInput);
 

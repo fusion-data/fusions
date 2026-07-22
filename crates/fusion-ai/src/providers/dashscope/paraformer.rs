@@ -17,6 +17,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::{AUTHORIZATION, USER_AGENT};
 use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_util::task::AbortOnDropHandle;
 use uuid::Uuid;
 
 use crate::providers::dashscope::{DashScopeCredentials, DashScopeRegion};
@@ -339,10 +340,12 @@ impl SpeechToText for ParaformerRealtimeV2 {
         }
       }
 
-      // 3c) 启动 audio sender task
+      // 3c) 启动 audio sender task。用 AbortOnDropHandle 保证消费方提前 drop 本
+      // 事件流（客户端断连 / 取消）时 sender 一并 abort —— 否则 detach 的任务会
+      // 一直持有 ws sink 并无限拉取(可能是活麦克风的)音频流,连接与流量泄漏。
       let mut audio = audio;
       let task_id_for_finish = task_id_for_stream.clone();
-      let send_task = tokio::spawn(async move {
+      let send_task = AbortOnDropHandle::new(tokio::spawn(async move {
         while let Some(frame) = audio.next().await {
           if frame.is_empty() {
             continue;
@@ -366,7 +369,7 @@ impl SpeechToText for ParaformerRealtimeV2 {
           .await
           .map_err(|e| format!("send finish-task: {e}"))?;
         Ok::<_, String>(())
-      });
+      }));
 
       // 3d) 持续读事件,合并 segments,直到 task-finished / task-failed
       let mut all_segments: Vec<TranscriptSegment> = Vec::new();
@@ -423,12 +426,12 @@ impl SpeechToText for ParaformerRealtimeV2 {
         }
       }
 
-      // 3e) 确保 audio sender task 已退出(超时丢弃);把它的错误向上冒
+      // 3e) 确保 audio sender task 已退出;把它的错误向上冒
       match tokio::time::timeout(Duration::from_secs(5), send_task).await {
         Ok(Ok(Ok(()))) => {}
         Ok(Ok(Err(msg))) => Err(SpeechToTextError::Network(msg))?,
         Ok(Err(join)) => Err(SpeechToTextError::Other(anyhow::anyhow!("audio sender panic: {join}")))?,
-        Err(_) => {} // sender 还没退出但事件流已结束,放弃等待
+        Err(_) => {} // 事件流已结束但 sender 未退出;timeout drop 掉 AbortOnDropHandle → sender 被 abort
       }
     };
 
