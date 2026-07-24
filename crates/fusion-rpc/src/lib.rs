@@ -12,7 +12,7 @@ pub mod context_validation_middleware;
 pub mod server;
 pub mod utils;
 
-pub use auth_middleware::{AuthConfig, AuthLayer, ClaimMapping, ClaimSource};
+pub use auth_middleware::{AuthConfig, AuthLayer, ClaimMapping, ClaimSource, TrustedSubject};
 pub use client::{ConnectTransport, TransportConfig, build_connect_transport, build_connect_transport_with};
 pub use context_validation_middleware::{ContextValidationConfig, ContextValidationLayer};
 

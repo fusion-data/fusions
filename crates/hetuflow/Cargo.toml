@@ -15,10 +15,12 @@ workspace = true
 hetuflow-core = { workspace = true, optional = true }
 hetuflow-runtime = { workspace = true, optional = true }
 hetuflow-sqlx = { workspace = true, optional = true }
+hetuflow-service = { workspace = true, optional = true }
 
 [features]
 default = ["runtime"]
 core = ["dep:hetuflow-core"]
 runtime = ["core", "dep:hetuflow-runtime"]
 sqlx = ["runtime", "dep:hetuflow-sqlx"]
-full = ["sqlx"]
+service = ["sqlx", "dep:hetuflow-service"]
+full = ["service"]

@@ -1,7 +1,7 @@
 # hetuflow 工作流框架规格
 
 > Status: 现行框架规格
-> Scope: `hetuflow-core`、`hetuflow-runtime`、`hetuflow-sqlx`、`hetuflow`
+> Scope: `hetuflow-core`、`hetuflow-runtime`、`hetuflow-sqlx`、`hetuflow-service`、`hetuflow`
 
 `hetuflow` 是 Postgres-first durable workflow framework。它提供 workflow definition、event log、activity projection、timer、outbox、graph validation、advance decision 与 replay/rebuild 基础能力。
 
@@ -14,7 +14,12 @@
 | `hetuflow-core` | 领域类型、状态枚举、节点 / transition / event type、错误、纯 helper、adapter-facing trait |
 | `hetuflow-runtime` | definition validation、graph lint、advance decision、CEL guard、replay reducer |
 | `hetuflow-sqlx` | Postgres store trait 与默认实现、event-log / projection / outbox / timer 读写 |
+| `hetuflow-service` | 事务内编排（start / signal / advance / join / fan-out / timer fire / resubmit / drift 核验）+ outbox dispatcher 与 timer poller 循环骨架 |
 | `hetuflow` | 聚合 crate 与 feature 入口 |
+
+feature 单调递增：`core` → `runtime` → `sqlx` → `service`。只做设计态校验的消费者（IR 编译器等）用 `runtime`，其依赖闭包内 MUST NOT 出现 store 与编排 crate。
+
+`hetuflow-service` 不并入 `hetuflow-sqlx` 的理由：store crate 的契约是「在 caller 的事务上跑 SQL」（§16.1 A1 invariant），编排是组合决策与存储的另一层职责；合并会让只需要 store 的消费者被迫编译 runtime，并模糊 A1 边界。
 
 框架 crate MUST NOT 依赖消费方业务 crate、业务 proto、业务权限模型、业务通知系统或业务 UI。
 
@@ -156,7 +161,38 @@ Compensation / saga remains deferred. It MUST NOT be enabled until a consuming a
 
 Detailed design record: [hetuflow-orchestration-gaps.md](./hetuflow-orchestration-gaps.md).
 
-## 10. application adapter 责任
+## 10. 编排与 worker（`hetuflow-service`）
+
+### 10.1 事务纪律
+
+- 请求驱动的编排方法（`start` / `signal` / `resubmit` / `fire_timer` / `on_*_delivered` / `verify_projection`）MUST 接 caller 已在事务内的 `&DbxPostgres`；框架 MUST NOT 自开事务、MUST NOT 设置会话变量（A1 invariant 上提到编排层）。
+- worker 需要跨事务时经 `TxnRunner` 端口取得事务：`system_write`（跨租户轮询）与 `tenant_write`（按行所属租户结算）。实现 MUST 原样传播闭包的 `FlowError`——把它压成自有错误类型会毁掉 not-found / conflict / validation 的区分。
+- 「append 事实 → 改投影 → 建 timer / outbox intent」MUST 在同一事务内，顺序 MUST 是事实先于投影。
+
+### 10.2 幂等与去重
+
+- `start` 按 `(business_type, business_key)` 幂等：命中未终态实例即原样返回，MUST NOT 报错、MUST NOT 建第二条。
+- `signal` / `resubmit` 的 `idempotency_key` 必填，落 event-log 的 `idempotency_key` 列；重复投递返回首次结果且不推进。
+- `fire_timer` 以 `status='pending'` CAS 去重（poller 允许把同一 timer 交给两趟，输者得 `false`）。
+- outbox 是**至少一次**：投递成功后到结算前崩溃 → 租约到期重投。业务 handler MUST 幂等（§4）。
+
+### 10.3 副作用
+
+- 通知与业务回调一律先入 outbox 再异步投递；投递路由（provider / 模板 / 渠道）经 `NotificationDispatcher` 与 `CallbackRegistry` 端口，框架只转发不发明。
+- 框架自产的两条通知（SLA 提醒、审批升级）的 `template_code` / 渠道策略取自 adapter 提供的 `WorkflowConfig`。
+- 终态业务副作用是**实例级**意图（`NodeKind` 无 BusinessCallback 变体，而 `BusinessCallbackPayload` 携带 `business_type` / `business_key`）：随 `StartCommand.terminal_callback` 传入、记在 `workflow.started.v1` payload，实例以 `approved` 完成时入 outbox，handler 确认成功后才翻 `side_effects_executed`。
+- 启动期即校验 terminal callback 的 handler 已注册（fail-closed）；到终态才发现无 handler 会让业务对象静默半成品。
+
+### 10.4 timer kind
+
+`reminder`（SLA 提醒）/ `escalation`（审批升级换 owner）/ `timeout`（EventWait 超时推进）。列在 store 侧是不透明串，语义由本层定义。
+
+### 10.5 本期未接线（fail-closed，非静默降级）
+
+- `SubWorkflow` 节点：需要「按 `flow_type` 解析 definition」的端口，store 契约未提供；调度到该 kind 显式报错，MUST NOT 把父实例挂死。
+- Compensation / saga：§9.8 显式 deferred。
+
+## 11. application adapter 责任
 
 Application adapter owns:
 

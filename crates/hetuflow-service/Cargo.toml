@@ -1,0 +1,29 @@
+[package]
+name = "hetuflow-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "hetuflow workflow framework — transactional orchestration service + outbox/timer worker skeletons"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+hetuflow-core = { workspace = true }
+hetuflow-runtime = { workspace = true }
+# Orchestration composes runtime decisions with store writes, so this crate sits ABOVE the store
+# layer. It is deliberately NOT folded into hetuflow-sqlx: that crate's contract is "Postgres
+# storage under the caller's transaction (A1 invariant)"; mixing orchestration in would force
+# store-only consumers to compile the runtime, and would blur the A1 boundary.
+hetuflow-sqlx = { workspace = true }
+# Only for the `DbxPostgres` handle the caller hands in (same reason as hetuflow-sqlx's A1 note).
+fusion-sql = { workspace = true }
+chrono.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid = { workspace = true }
+tokio = { workspace = true, features = ["time", "rt", "macros"] }
+tracing = { workspace = true, features = ["log"] }

@@ -36,6 +36,26 @@ pub enum ClaimSource {
   StringOrI64(&'static str),
 }
 
+/// A non-user principal that an application-owned OUTER layer has already verified — e.g. a
+/// signed cross-service scope from a sibling bin whose background job holds no user token.
+///
+/// Carried as a request **extension**, never a header. An HTTP client can set any header, but it
+/// cannot set a request extension: extensions are in-process typed slots. That matters because
+/// `AuthLayer` is the outermost layer, so if this arrived as a header it would have no way to tell
+/// "injected by my own inner layer" from "sent by the caller" — the extension removes that
+/// undecidable case by construction.
+///
+/// `AuthLayer` still strips every `claim_mappings` header first (a forged `x-tenant-id` dies
+/// there); the identity headers below are what gets re-injected.
+#[derive(Clone, Debug)]
+pub struct TrustedSubject {
+  /// Who vouched for this principal (goes into logs / audit), e.g. `"hylx-careos:system"`.
+  pub principal: String,
+  /// Identity headers to inject downstream, e.g. `[("x-tenant-id", "3")]`. The verifying layer
+  /// derives these from whatever it verified — `AuthLayer` never invents them.
+  pub identity_headers: Vec<(&'static str, String)>,
+}
+
 /// Configuration for the auth middleware.
 ///
 /// All fields use `&'static str` since values are known at compile time and
@@ -50,6 +70,12 @@ pub struct AuthConfig {
   pub preserve_identity_headers_for_paths: &'static [&'static str],
   /// (service, method) ConnectRPC pairs that skip authentication.
   pub exclude_rpcs: &'static [(&'static str, &'static str)],
+  /// (service, method) pairs a verified [`TrustedSubject`] may reach.
+  ///
+  /// Fail-closed and deliberately separate from [`Self::exclude_rpcs`]: an entry here does NOT
+  /// make the RPC anonymous — a caller without either a bearer token or a trusted subject is
+  /// still rejected, and a trusted subject calling anything outside this list is rejected too.
+  pub trusted_subject_rpcs: &'static [(&'static str, &'static str)],
   /// JWT claim → HTTP header mappings.
   pub claim_mappings: &'static [ClaimMapping],
   /// Name of the cookie carrying the JWT, used as a fallback when no
@@ -75,6 +101,7 @@ impl AuthConfig {
     exclude_paths: &[],
     preserve_identity_headers_for_paths: &[],
     exclude_rpcs: &[],
+    trusted_subject_rpcs: &[],
     claim_mappings: &[],
     cookie_token_name: "access_token",
     error_code: "unauthenticated",
@@ -140,6 +167,46 @@ impl AsyncAuthorizeRequest<Body> for AuthAuthorizer {
         && config.exclude_rpcs.iter().any(|(s, m)| *s == service && *m == method)
       {
         return Ok(request);
+      }
+
+      // A non-user principal an inner-trusted layer already verified. Admitted only for the
+      // explicitly whitelisted RPCs; anything else falls through to the bearer requirement below,
+      // so the default answer for a trusted subject is the same 401 an anonymous caller gets.
+      if let Some(subject) = request.extensions().get::<TrustedSubject>().cloned() {
+        let allowed = parse_rpc_path(&path)
+          .map(|(service, method)| config.trusted_subject_rpcs.iter().any(|(s, m)| *s == service && *m == method))
+          .unwrap_or(false);
+        if allowed {
+          let headers = request.headers_mut();
+          for (name, value) in &subject.identity_headers {
+            match value.parse() {
+              Ok(hv) => {
+                headers.insert(*name, hv);
+              }
+              Err(_) => {
+                // Same fail-closed rule as the claim path: a header the downstream cannot read
+                // would let it fall through to its "no tenant" branch.
+                log::warn!(
+                  target: "fusion_rpc::auth",
+                  "auth: rejecting trusted subject '{}' — identity header '{name}' is not valid ASCII",
+                  subject.principal
+                );
+                return Err(unauthorized_response(&config, config.error_message));
+              }
+            }
+          }
+          log::debug!(
+            target: "fusion_rpc::auth",
+            "auth: admitted trusted subject '{}' for {path} (metric=hylx.auth.trusted_subject_admitted)",
+            subject.principal
+          );
+          return Ok(request);
+        }
+        log::warn!(
+          target: "fusion_rpc::auth",
+          "auth: trusted subject '{}' is not whitelisted for {path} (metric=hylx.auth.trusted_subject_refused)",
+          subject.principal
+        );
       }
 
       // Extract and decrypt JWT
@@ -254,6 +321,7 @@ mod tests {
       exclude_paths: &["/health", "/config", "/version"],
       preserve_identity_headers_for_paths: &[],
       exclude_rpcs: &[("hylx.auth.v1.AuthService", "Login"), ("hylx.auth.v1.AuthService", "RefreshToken")],
+      trusted_subject_rpcs: &[("hylx.permission.v1.PermissionService", "ListUsersByPermission")],
       claim_mappings: &[
         ClaimMapping { header: "x-tenant-id", source: ClaimSource::String("tenant_id") },
         ClaimMapping { header: "x-user-id", source: ClaimSource::Subject },
@@ -451,6 +519,63 @@ mod tests {
   fn test_default_cookie_token_name_is_business_agnostic() {
     assert_eq!(AuthConfig::DEFAULT.cookie_token_name, "access_token");
     assert_eq!(AuthConfig::default().cookie_token_name, "access_token");
+  }
+
+  // ---- TrustedSubject (ADR-0003 in the consuming application) ----
+
+  fn trusted_subject_request(path: &str) -> Request<Body> {
+    let mut req = make_request(path, vec![("x-tenant-id", "forged-tenant")]);
+    req.extensions_mut().insert(TrustedSubject {
+      principal: "sibling-bin:system".to_string(),
+      identity_headers: vec![("x-tenant-id", "3".to_string()), ("x-context-type", "tenant".to_string())],
+    });
+    req
+  }
+
+  #[tokio::test]
+  async fn test_trusted_subject_admitted_only_for_whitelisted_rpc() {
+    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let req = trusted_subject_request("/hylx.permission.v1.PermissionService/ListUsersByPermission");
+    let result = authorizer.authorize(req).await.expect("whitelisted trusted subject is admitted");
+    // The forged inbound header was stripped and replaced by the subject's own value.
+    assert_eq!(result.headers().get("x-tenant-id").unwrap(), "3");
+    assert_eq!(result.headers().get("x-context-type").unwrap(), "tenant");
+    // A trusted subject carries no user identity.
+    assert!(result.headers().get("x-user-id").is_none());
+  }
+
+  #[tokio::test]
+  async fn test_trusted_subject_outside_whitelist_still_401() {
+    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let req = trusted_subject_request("/hylx.resident.v1.ResidentService/ListResidents");
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_err(), "an off-whitelist RPC MUST NOT be reachable by a trusted subject");
+    assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
+  }
+
+  #[tokio::test]
+  async fn test_whitelisted_rpc_without_trusted_subject_still_401() {
+    // The whitelist does NOT make the RPC anonymous.
+    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let req = make_request("/hylx.permission.v1.PermissionService/ListUsersByPermission", vec![]);
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
+  }
+
+  #[tokio::test]
+  async fn test_trusted_subject_with_unrepresentable_header_is_refused() {
+    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut req = make_request("/hylx.permission.v1.PermissionService/ListUsersByPermission", vec![]);
+    req.extensions_mut().insert(TrustedSubject {
+      principal: "sibling-bin:system".to_string(),
+      // A control character can never be a header value (http rejects it) — the point is that an
+      // unrepresentable value fails closed instead of being silently dropped, which would let the
+      // downstream fall through to its "no tenant" branch.
+      identity_headers: vec![("x-tenant-id", "3\n4".to_string())],
+    });
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_err(), "an unparseable identity header MUST fail closed, not be dropped");
   }
 
   #[tokio::test]

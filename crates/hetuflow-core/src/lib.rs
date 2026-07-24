@@ -2,7 +2,8 @@
 //!
 //! 不依赖 hylx-*、ConnectRPC、Axum、SQLx、fusions。只定义领域模型、状态、错误、
 //! 纯函数（hash / 退避）与常量。图校验与推进决策在 `hetuflow-runtime`；存储在
-//! `hetuflow-sqlx`；HYLX proto↔core 映射、scope、审计、通知在 `hylx-task` adapter。
+//! `hetuflow-sqlx`；事务内编排与 worker 骨架在 `hetuflow-service`；proto↔core 映射、scope、
+//! 审计、通知等消费方绑定在宿主 adapter（框架不知道宿主是谁）。
 
 use std::future::Future;
 use std::pin::Pin;
@@ -786,7 +787,7 @@ pub struct BusinessCallbackPayload {
 
 pub type CallbackFuture<'a> = Pin<Box<dyn Future<Output = std::result::Result<(), CallbackError>> + Send + 'a>>;
 
-/// Business callback side-effect handler. Object-safe so hylx-task can keep a
+/// Business callback side-effect handler. Object-safe so the consuming adapter can keep a
 /// heterogeneous registry while hetuflow-core remains application-agnostic.
 pub trait BusinessCallbackHandler: Send + Sync {
   fn handler_type(&self) -> &str;

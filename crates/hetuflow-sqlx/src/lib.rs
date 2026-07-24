@@ -20,7 +20,7 @@
 //!
 //! 真正多态的 `WorkflowBackend`（Restate/Cloacina/...）要求 backend 自拥事务生命
 //! 周期 —— 与 A1 冲突，故 §16.4 锁定为 NOT in scope。此 trait 仅做**契约文档化**：
-//! 列出 hylx-task 对 store 的能力集，便于未来评估替代实现 + framework-level 测试
+//! 列出编排层对 store 的能力集，便于未来评估替代实现 + framework-level 测试
 //! helper（如果真要做第二个 backend 候选，先去松 A1 invariant 再扩抽象）。
 
 use fusion_sql::store::DbxPostgres;
@@ -219,7 +219,7 @@ impl TimerRow {
 /// **A1 invariant**：所有方法接 caller 传入的 `&DbxPostgres`（已在事务内），实现
 /// **不**自开事务、**不**做 GUC 注入。当前唯一 in-tree 实现：[`PgWorkflowStore`]。
 ///
-/// `async fn` 不显式标 `+ Send` 因 trait 仅供 hylx-task 内部 + 唯一 concrete impl
+/// `async fn` 不显式标 `+ Send` 因 trait 仅供框架内部消费 + 唯一 concrete impl
 /// （`PgWorkflowStore` over sqlx + Postgres，future 天然 Send）；generic dispatch
 /// 未来若需要再 desugar 为 `-> impl Future + Send`。
 #[allow(async_fn_in_trait)]
@@ -489,6 +489,15 @@ pub trait WorkflowStore: Send + Sync {
     dbx: &DbxPostgres,
     activity_id: uuid::Uuid,
     new_role: &str,
+  ) -> Result<bool>;
+
+  /// 认领 / 改派：设置活动的 assignee_id（CAS：仅 active 状态更新）。`None` = 释放认领。
+  /// 与 [`Self::update_activity_assignee_role`] 正交——角色是「谁该办」，assignee 是「谁在办」。
+  async fn update_activity_assignee(
+    &self,
+    dbx: &DbxPostgres,
+    activity_id: uuid::Uuid,
+    assignee_id: Option<i64>,
   ) -> Result<bool>;
 
   async fn mark_timer_fired(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<bool>;
@@ -1287,6 +1296,25 @@ impl WorkflowStore for PgWorkflowStore {
           "UPDATE activity_instances SET assignee_role = $1, updated_at = now() WHERE id = $2 AND status = 'active'",
         )
         .bind(new_role)
+        .bind(activity_id),
+      )
+      .await
+      .map_err(map_db)?;
+    Ok(n > 0)
+  }
+
+  async fn update_activity_assignee(
+    &self,
+    dbx: &DbxPostgres,
+    activity_id: uuid::Uuid,
+    assignee_id: Option<i64>,
+  ) -> Result<bool> {
+    let n = dbx
+      .execute(
+        sqlx::query(
+          "UPDATE activity_instances SET assignee_id = $1, updated_at = now() WHERE id = $2 AND status = 'active'",
+        )
+        .bind(assignee_id)
         .bind(activity_id),
       )
       .await
