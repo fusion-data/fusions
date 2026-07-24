@@ -58,8 +58,8 @@ pub use fusion_web as web;
 // ==================== SQL 模块 re-export ====================
 
 #[cfg(feature = "db")]
-/// SQL/ORM 模块 (fusionsql)
-pub use fusionsql as sql;
+/// SQL 模块 (fusion-sql)
+pub use fusion_sql as sql;
 
 // ==================== 子模块 ====================
 

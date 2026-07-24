@@ -23,7 +23,7 @@
 //! 列出 hylx-task 对 store 的能力集，便于未来评估替代实现 + framework-level 测试
 //! helper（如果真要做第二个 backend 候选，先去松 A1 invariant 再扩抽象）。
 
-use fusionsql::store::DbxPostgres;
+use fusion_sql::store::DbxPostgres;
 use hetuflow_core::{
   ActivityInstance, ActivityType, DefinitionSnapshot, EventRecord, FacilityVisibility, FlowError, OutboxRecord, Result,
   ScopeFilter, TimerRecord, WorkflowInstance, WorkflowResult, WorkflowStatus,

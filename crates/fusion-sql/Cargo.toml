@@ -1,5 +1,5 @@
 [package]
-name = "fusion-db"
+name = "fusion-sql"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,22 +12,24 @@ publish = true
 workspace = true
 
 [features]
-with-postgres = ["fusion-sql/with-postgres"]
-with-sqlite = ["fusion-sql/with-sqlite"]
-with-uuid = ["dep:uuid", "fusion-sql/with-uuid"]
+default = ["with-postgres"]
+with-postgres = ["sqlx/postgres"]
+with-sqlite = ["sqlx/sqlite"]
+with-uuid = ["dep:uuid", "fusion-sql-core/with-uuid"]
 
 [dependencies]
-fusion-common.workspace = true
-fusion-core = { workspace = true }
-fusion-sql = { workspace = true }
+fusion-common = { workspace = true }
+fusion-sql-core = { workspace = true }
+regex = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid = { workspace = true, optional = true }
-config = { workspace = true }
-sqlx.workspace = true
+duration-str = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 anyhow.workspace = true

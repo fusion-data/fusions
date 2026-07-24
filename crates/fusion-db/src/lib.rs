@@ -3,8 +3,8 @@ use std::{marker::PhantomData, sync::Arc};
 use ::config::{File, FileFormat};
 use fusion_common::ctx::Ctx;
 use fusion_core::{application::ApplicationBuilder, async_trait, configuration::ConfigRegistry, plugin::Plugin};
-pub use fusionsql::{DbConfig, ModelContext};
-pub type ModelManager = fusionsql::DefaultModelManager;
+pub use fusion_sql::{DbConfig, ModelContext};
+pub type ModelManager = fusion_sql::DefaultModelManager;
 
 pub const DEFAULT_CONFIG_STR: &str = include_str!("../resources/default.toml");
 
@@ -18,7 +18,7 @@ impl Plugin for DbPlugin {
     let config: DbConfig = app
       .get_config_by_path("fusion.db")
       .expect("DbPlugin config load failed, please check the config file: `fusion.db`");
-    let mm = fusionsql::DefaultModelManager::new(&config, Some(app.get_fusion_config().app().name()))
+    let mm = fusion_sql::DefaultModelManager::new(&config, Some(app.get_fusion_config().app().name()))
       .await
       .expect("ModelManager init failed")
       .with_ctx(Ctx::new_super_admin());
@@ -53,7 +53,7 @@ where
     let config: DbConfig = app
       .get_config_by_path("fusion.db")
       .expect("TypedDbPlugin config load failed, please check the config file: `fusion.db`");
-    let mm = fusionsql::ModelManager::<C>::new(&config, Some(app.get_fusion_config().app().name()))
+    let mm = fusion_sql::ModelManager::<C>::new(&config, Some(app.get_fusion_config().app().name()))
       .await
       .expect("ModelManager init failed")
       .with_ctx((self.ctx_factory)());

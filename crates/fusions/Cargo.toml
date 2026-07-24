@@ -25,23 +25,23 @@ common-default = ["fusion-common/with-uuid"]
 web = ["dep:fusion-web", "dep:axum", "common-web"]
 common-web = ["fusion-common/with-openapi", "fusion-web/with-openapi"]
 
-# 数据库 (PostgreSQL + fusionsql)
+# 数据库 (PostgreSQL + fusion-sql)
 db = [
   "dep:fusion-db",
   "dep:sqlx",
-  "dep:fusionsql",
+  "dep:fusion-sql",
   "sqlx/postgres",
   "fusion-db/with-postgres",
-  "fusionsql/with-postgres",
-  "fusionsql/with-uuid",
+  "fusion-sql/with-postgres",
+  "fusion-sql/with-uuid",
   "fusion-common/with-db",
 ]
 # SQLite 支持
 db-sqlite = [
   "dep:sqlx",
-  "dep:fusionsql",
+  "dep:fusion-sql",
   "sqlx/sqlite",
-  "fusionsql/with-sqlite",
+  "fusion-sql/with-sqlite",
   "fusion-common/with-db",
 ]
 
@@ -101,9 +101,9 @@ fusion-core = { workspace = true }
 fusion-core-macros = { workspace = true }
 # -- security
 fusion-security = { workspace = true, optional = true }
-# -- db & fusionsql
-fusionsql-core = { workspace = true, optional = true }
-fusionsql = { workspace = true, optional = true }
+# -- db & fusion-sql
+fusion-sql-core = { workspace = true, optional = true }
+fusion-sql = { workspace = true, optional = true }
 fusion-db = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 # -- web & axum

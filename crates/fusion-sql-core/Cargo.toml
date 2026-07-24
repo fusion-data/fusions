@@ -1,0 +1,28 @@
+[package]
+name = "fusion-sql-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[features]
+with-uuid = ["dep:uuid"]
+with-wasm = ["fusion-common/with-wasm"]
+
+[dependencies]
+fusion-common = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
+tsify = { workspace = true }

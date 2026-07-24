@@ -1,7 +1,7 @@
 //! 聚合错误模型 [`DataError`] —— fusion 生态的统一业务错误类型。
 //!
 //! `DataError` 与各 `fusion-xxx` 子库自有的错误类型（如 `fusion_core::CoreError`、
-//! `fusion_security::SecurityError`、`fusion_web::WebError`、`fusionsql::SqlError`
+//! `fusion_security::SecurityError`、`fusion_web::WebError`、`fusion_sql::SqlError`
 //! 等）通过本模块的 `From` 实现连接。具体取舍：
 //!
 //! - 各 `fusion-xxx` crate 仅暴露自有错误类型，不再直接依赖 `DataError`；
@@ -442,13 +442,13 @@ impl From<DataError> for connectrpc::ConnectError {
 }
 
 // ==========================================
-// fusion-db / fusionsql / sqlx
+// fusion-db / fusion-sql / sqlx
 // ==========================================
 
 #[cfg(feature = "db")]
-impl From<fusionsql::SqlError> for DataError {
-  fn from(value: fusionsql::SqlError) -> Self {
-    use fusionsql::SqlError;
+impl From<fusion_sql::SqlError> for DataError {
+  fn from(value: fusion_sql::SqlError) -> Self {
+    use fusion_sql::SqlError;
     match value {
       SqlError::Unauthorized(e) => DataError::unauthorized(e),
       SqlError::InvalidArgument { message } => DataError::bad_request(format!("InvalidArgument, {message}")),
@@ -483,8 +483,6 @@ impl From<fusionsql::SqlError> for DataError {
       e @ SqlError::CantCreateModelManagerProvider(_) => DataError::server_error(e.to_string()),
       // 调用侧装配缺陷（未 with_ctx 就做上下文相关操作），不是认证失败 → 500 而非 401
       e @ SqlError::CtxMissing => DataError::server_error(e.to_string()),
-      e @ SqlError::IntoSeaError(_) => DataError::server_error(e.to_string()),
-      e @ SqlError::SeaQueryError(_) => DataError::server_error(e.to_string()),
       e @ SqlError::JsonError(_) => DataError::server_error(e.to_string()),
       SqlError::Custom(msg) => DataError::server_error(msg),
       SqlError::DbxError(e) => DataError::internal(codes::IO_ERROR, e.to_string(), Some(Box::new(e))),
@@ -494,11 +492,11 @@ impl From<fusionsql::SqlError> for DataError {
 }
 
 #[cfg(feature = "db")]
-impl From<fusionsql::store::DbxError> for DataError {
-  fn from(value: fusionsql::store::DbxError) -> Self {
+impl From<fusion_sql::store::DbxError> for DataError {
+  fn from(value: fusion_sql::store::DbxError) -> Self {
     // 优先用 SQLSTATE 精确匹配（sqlx::Error::Database 的 Display 不输出 SQLSTATE，
     // 字符串 contains("23505") 永远 miss → 旧版本会把 UNIQUE 冲突误归为 server_error）
-    if let fusionsql::store::DbxError::Sqlx(sqlx_err) = &value
+    if let fusion_sql::store::DbxError::Sqlx(sqlx_err) = &value
       && let Some(db_err) = sqlx_err.as_database_error()
       && let Some(code) = db_err.code()
     {
@@ -640,7 +638,7 @@ mod tests {
   #[test]
   fn sql_ctx_missing_maps_to_internal_not_unauthorized() {
     // 未 with_ctx 是装配缺陷 → 500；不得伪装成 401 误导排障方向
-    let err: DataError = fusionsql::SqlError::CtxMissing.into();
+    let err: DataError = fusion_sql::SqlError::CtxMissing.into();
     assert_eq!(err.code.as_ref(), codes::INTERNAL_ERROR);
   }
 }

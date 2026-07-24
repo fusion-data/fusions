@@ -177,7 +177,6 @@ impl<'de> Deserialize<'de> for SensitiveString {
 
 #[cfg(feature = "with-db")]
 mod _db {
-  use sea_query::Value;
   use sqlx::{Database, Decode, Type};
 
   use super::SensitiveString;
@@ -210,18 +209,6 @@ mod _db {
       let value = <&str as Decode<DB>>::decode(value)?;
 
       Ok(SensitiveString::new(value.to_string(), value.len() / 2, '*'))
-    }
-  }
-
-  impl From<SensitiveString> for sea_query::Value {
-    fn from(s: SensitiveString) -> Self {
-      Value::String(Some(Box::new(s.underlying)))
-    }
-  }
-
-  impl sea_query::Nullable for SensitiveString {
-    fn null() -> sea_query::Value {
-      sea_query::Value::String(None)
     }
   }
 }

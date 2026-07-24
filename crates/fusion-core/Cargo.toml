@@ -28,7 +28,6 @@ with-tracing = [
   "dep:init-tracing-opentelemetry",
   "dep:tracing-opentelemetry-instrumentation-sdk",
 ]
-fusionsql = ["dep:fusionsql"]
 
 [dependencies]
 fusion-common = { workspace = true }
@@ -69,7 +68,6 @@ serde_json.workspace = true
 serde_with.workspace = true
 serde_repr.workspace = true
 utoipa = { workspace = true, optional = true }
-fusionsql = { workspace = true, optional = true }
 content_inspector = { workspace = true }
 mime_guess = { workspace = true }
 

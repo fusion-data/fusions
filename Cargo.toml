@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "examples/*"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 description = "Fusion framework workspace"
 authors = ["Hylx Team"]
 license = "LicenseRef-Proprietary"
@@ -28,26 +28,25 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 # -- projects begin - fusion
-fusion-common = { version = "0.2.0", path = "crates/fusion-common" }
-fusion-core-macros = { version = "0.2.0", path = "crates/fusion-core-macros" }
-fusion-core = { version = "0.2.0", path = "crates/fusion-core" }
-fusion-security = { version = "0.2.0", path = "crates/fusion-security" }
-fusionsql-core = { version = "0.2.0", path = "crates/fusionsql-core" }
-fusionsql-macros = { version = "0.2.0", path = "crates/fusionsql-macros" }
-fusionsql = { version = "0.2.0", path = "crates/fusionsql" }
-fusion-db = { version = "0.2.0", path = "crates/fusion-db" }
-fusion-mq = { version = "0.2.0", path = "crates/fusion-mq" }
-fusion-web = { version = "0.2.0", path = "crates/fusion-web" }
-fusion-rpc = { version = "0.2.0", path = "crates/fusion-rpc" }
-fusion-ai = { version = "0.2.0", path = "crates/fusion-ai" }
-fusions = { version = "0.2.0", path = "crates/fusions" }
+fusion-common = { version = "0.3.0", path = "crates/fusion-common" }
+fusion-core-macros = { version = "0.3.0", path = "crates/fusion-core-macros" }
+fusion-core = { version = "0.3.0", path = "crates/fusion-core" }
+fusion-security = { version = "0.3.0", path = "crates/fusion-security" }
+fusion-sql-core = { version = "0.3.0", path = "crates/fusion-sql-core" }
+fusion-sql = { version = "0.3.0", path = "crates/fusion-sql" }
+fusion-db = { version = "0.3.0", path = "crates/fusion-db" }
+fusion-mq = { version = "0.3.0", path = "crates/fusion-mq" }
+fusion-web = { version = "0.3.0", path = "crates/fusion-web" }
+fusion-rpc = { version = "0.3.0", path = "crates/fusion-rpc" }
+fusion-ai = { version = "0.3.0", path = "crates/fusion-ai" }
+fusions = { version = "0.3.0", path = "crates/fusions" }
 # -- projects end - fusion
 
 # -- hetuflow workflow framework
-hetuflow-core = { version = "0.2.0", path = "crates/hetuflow-core" }
-hetuflow-runtime = { version = "0.2.0", path = "crates/hetuflow-runtime" }
-hetuflow-sqlx = { version = "0.2.0", path = "crates/hetuflow-sqlx" }
-hetuflow = { version = "0.2.0", path = "crates/hetuflow" }
+hetuflow-core = { version = "0.3.0", path = "crates/hetuflow-core" }
+hetuflow-runtime = { version = "0.3.0", path = "crates/hetuflow-runtime" }
+hetuflow-sqlx = { version = "0.3.0", path = "crates/hetuflow-sqlx" }
+hetuflow = { version = "0.3.0", path = "crates/hetuflow" }
 # -- hetuflow end
 
 # -- QRCode
@@ -212,24 +211,9 @@ croner = "3.0"
 hierarchical_hash_wheel_timer = { version = "1.4", features = ["uuid"] }
 # -- Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "chrono", "json", "rust_decimal"] }
-sea-query = { version = "0.32", features = ["attr", "thread-safe"] }
-sea-query-binder = { version = "0.7", features = ["with-json", "with-chrono"] }
-# sqlx / sea-query / pgvector 是一组耦合依赖 —— 改动任一项前先看下面的约束链。
-#
-#   sqlx 保持 0.8       —— sea-query-binder 的稳定版 0.7.0 与 0.8.0-rc 线**都**依赖 `sqlx ^0.8`，
-#                          fusionsql / fusion-db 建立其上。sqlx 0.9 已发布但在 SeaQL 放出接受它的
-#                          binder 之前无法启用。
-#   sea-query 保持 0.32 —— 稳定版 binder 0.7.0 依赖 `sea-query ^0.32`；sea-query 1.0 只有 rc binder。
-#   rig / rig-postgres 保持 0.39 —— rig-postgres 0.40 要求 `sqlx ^0.9`，被上面一条阻塞。
-#
-# pgvector 钉 =0.4.1，属同一耦合块，理由需说准确：0.4.1 声明 `sqlx ^0.8`，会落到 workspace 自己的
-# sqlx 上；0.4.2 把范围**放宽**为 `sqlx >=0.8, <0.10` —— 跨越两个 0.x 兼容组的范围会让 cargo 选**最高**
-# 的那组（0.9），而不是复用图中已有的 0.8。结果是同一二进制里两套 sqlx，且 pgvector 的 `Vector`
-# Encode/Decode/Type impl 绑在 fusionsql 用不了的 0.9 那份上。放宽的范围读起来更宽松，实际效果相反。
-#
-# 解钉条件是「图中不再有 sqlx 0.8」（即上面 sea-query-binder 链放开 sqlx 0.9 之后），
-# 而不是「pgvector 的范围看起来允许 0.8」。
-pgvector = { version = "=0.4.1", features = ["sqlx"] }
+# sqlx 保持 0.8：rig / rig-postgres 保持 0.39，rig-postgres 0.40 要求 `sqlx ^0.9`，
+# 在 rig 升级前 sqlx 0.9 不可用。（sea-query / sea-query-binder / pgvector 已在 0.3.0 移除，
+# 不再构成耦合约束。）
 # -- Serde
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_path_to_error = "0.1"
