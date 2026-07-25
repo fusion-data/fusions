@@ -19,6 +19,17 @@ pub mod video_generation;
 /// risk itself.
 pub use rig;
 
+/// Re-exports of the crates that appear in this crate's **public** API surface
+/// (`SttUplink::Audio(Bytes)`, `SttUplinkStream`, `#[async_trait]` on `SpeechToText` /
+/// `LlmChatProvider`).
+///
+/// Downstream code implementing those traits MUST use these rather than declaring its own
+/// dependency: a version skew produces the classic `expected Bytes, found Bytes` diagnostic, which
+/// reads as a compiler bug to anyone who has not hit it before.
+///
+/// Same SemVer caveat as [`rig`]: these are upstream dependencies passed through verbatim.
+pub use {async_trait::async_trait, bytes, futures};
+
 pub use error::*;
 
 /// New factory module (rig 0.27+ explicit provider pattern)

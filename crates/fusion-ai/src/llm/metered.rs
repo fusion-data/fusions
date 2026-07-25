@@ -119,10 +119,15 @@ pub struct AiUsageCtx {
   pub request_kind: String,
 }
 
-/// 一条模型 token 计量事件 —— 落 `ai_model_usage_events`（hylx_ai 库）。
+/// 一条模型计量事件 —— 落 `ai_model_usage_events`（hylx_ai 库）。
 ///
 /// `occurred_at` 由事件携带（捕获时戳），token 用 `i64`（bind BIGINT，`u32 → i64` 无损上转）。
+///
+/// `#[non_exhaustive]`：本结构会随新模态增补字段（`audio_duration_ms` 即是一例），
+/// 构造 MUST 经 [`Self::from_ctx_tokens`] / [`Self::from_ctx_audio`],而不是字面量 ——
+/// 否则每加一个模态都是一次下游破坏性变更。
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AiUsageEvent {
   pub occurred_at: DateTime<Utc>,
   pub tenant_id: i64,
@@ -140,12 +145,20 @@ pub struct AiUsageEvent {
   pub session_id: Option<Uuid>,
   pub request_kind: String,
   pub latency_ms: Option<i64>,
+  /// 音频时长（ms）—— **STT 的可计费维度**，token 三列对 STT 恒为 0。
+  ///
+  /// chat 调用恒为 `None`。provider 未回时长时也为 `None`：计量是 best-effort，
+  /// MUST NOT 为了「有个数」而编造一个值。
+  pub audio_duration_ms: Option<i64>,
 }
 
 impl AiUsageEvent {
-  /// 由 ctx snapshot + 本次 usage + outcome 组装事件。`occurred_at` 由 caller 传入
-  /// （捕获时 `Utc::now()`），`latency_ms` 为 `chat_complete` 耗时（可空）。
-  pub fn from_ctx_usage(
+  /// 由 ctx snapshot + 本次 token usage + outcome 组装 **chat** 事件。`occurred_at` 由 caller
+  /// 传入（捕获时 `Utc::now()`），`latency_ms` 为 `chat_complete` 耗时（可空）。
+  ///
+  /// 名字点明模态:早先的通用名 `from_ctx_usage` 会让 STT 路径误用它 —— 那会静默丢掉音频时长,
+  /// 也就是该模态**唯一**的可计费维度。
+  pub fn from_ctx_tokens(
     ctx: &AiUsageCtx,
     usage: &TokenUsage,
     outcome: Outcome,
@@ -168,6 +181,41 @@ impl AiUsageEvent {
       session_id: ctx.session_id,
       request_kind: ctx.request_kind.clone(),
       latency_ms,
+      audio_duration_ms: None,
+    }
+  }
+
+  /// 由 ctx snapshot + 音频时长组装 **STT** 事件。token 三列记 0——不是「零 token」的断言，
+  /// 而是「本模态不以 token 计量」的表达；读侧按 `request_kind` 区分即可。
+  ///
+  /// 一次识别会话记**一行**：按分段或按帧拆行会把一次调用的成本碎成不可归并的片段。
+  ///
+  /// `audio_duration_ms` 是 `i64` 而非 `Option`：一条既无 token 又无时长的行没有任何意义,
+  /// 也与「provider 没回时长」不可区分。provider 未回时长时 MUST 不记这一行,而不是记一行空的。
+  pub fn from_ctx_audio(
+    ctx: &AiUsageCtx,
+    audio_duration_ms: i64,
+    outcome: Outcome,
+    occurred_at: DateTime<Utc>,
+    latency_ms: Option<i64>,
+  ) -> Self {
+    Self {
+      occurred_at,
+      tenant_id: ctx.tenant_id,
+      dimensions: ctx.dimensions.clone(),
+      feature_code: ctx.feature_code.clone(),
+      provider: ctx.provider.clone(),
+      model: ctx.model.clone(),
+      matched_scope: ctx.matched_scope,
+      outcome,
+      credential_id: ctx.credential_id,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      session_id: ctx.session_id,
+      request_kind: ctx.request_kind.clone(),
+      latency_ms,
+      audio_duration_ms: Some(audio_duration_ms),
     }
   }
 }
@@ -218,7 +266,7 @@ impl LlmChatProvider for MeteredLlmProvider {
       && let Some(u) = &r.usage
     {
       let latency_ms = i64::try_from(started.elapsed().as_millis()).ok();
-      let ev = AiUsageEvent::from_ctx_usage(&self.ctx, u, Outcome::Success, Utc::now(), latency_ms);
+      let ev = AiUsageEvent::from_ctx_tokens(&self.ctx, u, Outcome::Success, Utc::now(), latency_ms);
       self.sink.record(ev);
     }
     resp
@@ -319,7 +367,7 @@ mod tests {
   fn event_carries_dimension_snapshot_from_ctx() {
     let c = ctx(MatchedScope::Dimension);
     let usage = TokenUsage { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 };
-    let ev = AiUsageEvent::from_ctx_usage(&c, &usage, Outcome::Success, Utc::now(), Some(7));
+    let ev = AiUsageEvent::from_ctx_tokens(&c, &usage, Outcome::Success, Utc::now(), Some(7));
     assert_eq!(ev.dimensions, c.dimensions, "维度快照 MUST 随事件落账");
     assert_eq!(ev.matched_scope, MatchedScope::Dimension);
   }

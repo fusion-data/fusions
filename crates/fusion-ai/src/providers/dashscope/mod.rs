@@ -1,13 +1,21 @@
 //! 阿里云百炼 DashScope provider。
 //!
 //! 当前覆盖:
-//! - [`ParaformerRealtimeV2`] —— Paraformer 实时 v2 流式 STT(WebSocket)
-//! - [`QwenTts`] —— Qwen-TTS / qwen3-tts-flash 同步合成(HTTP)
+//! - [`fun_asr::FunAsrRealtime`] —— Fun-ASR 实时流式 STT(WebSocket)
+//! - [`qwen_tts::QwenTts`] —— Qwen-TTS / qwen3-tts-flash 同步合成(HTTP)
 //!
 //! 未来按需扩展 CosyVoice、Qwen-Audio、Qwen-VL 等子能力。
 
-pub mod paraformer;
+pub mod fun_asr;
 pub mod qwen_tts;
+
+pub use fun_asr::FunAsrRealtime;
+pub use qwen_tts::QwenTts;
+
+/// 会话级测试:对着本地假 DashScope 服务端跑完整的 `transcribe_realtime` 事件循环
+/// （握手时序 / ping 容忍 / 上行泵分发 / finish-task 时序 / 空闲上限 / 提前取消）。
+#[cfg(test)]
+mod session_tests;
 
 use std::env;
 
@@ -22,7 +30,7 @@ pub enum DashScopeRegion {
 }
 
 impl DashScopeRegion {
-  /// 实时 WebSocket 推理 endpoint。Paraformer / CosyVoice 都走这个。
+  /// 实时 WebSocket 推理 endpoint。Fun-ASR / CosyVoice 都走这个。
   pub fn websocket_endpoint(self) -> &'static str {
     match self {
       Self::Beijing => "wss://dashscope.aliyuncs.com/api-ws/v1/inference",

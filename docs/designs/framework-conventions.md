@@ -31,7 +31,7 @@
 | 辅助任务取消安全 | `tokio::spawn` 的辅助任务持有连接 / 流（WebSocket sink、音频流等）时，其 handle MUST 具备 abort-on-drop 语义（`tokio_util::task::AbortOnDropHandle`）。判据：裸 `JoinHandle` drop 只 detach，消费方提前取消 → 任务持连接无限拉流泄漏 |
 | 流式解析容错 | 解析外部 provider 流式分块（SSE tool_call 等）时，不合规分块 MUST 跳过（`debug!` 记录），MUST NOT `expect`/`unwrap` 打穿流任务 |
 
-验证锚点：`wire_openai_compat.rs` `with_timeout_resets_cached_client`；`paraformer.rs` 3c/3e 注释锚点。
+验证锚点：`wire_openai_compat.rs` `with_timeout_resets_cached_client`；`fun_asr.rs` 2c/2e 注释锚点。
 
 ## 4. 数据访问
 
