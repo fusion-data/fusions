@@ -61,6 +61,14 @@ pub const MAX_CONTEXT_ITEMS: usize = 5;
 /// 请求挂着、界面停在"转写中",而降级路径永远等不到触发点。
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// 默认的**建连 + `task-started`** 合计期限。
+///
+/// 覆盖 TCP 连接、TLS 握手、HTTP Upgrade 与随后的 `task-started` 等待 —— 四段共用一个期限。
+/// 分开计时没有意义:调用方关心的是"多久之后可以判定这条会话起不来",而挂死的中间设备
+/// (接受 TCP 与 TLS 却不回 101)造成的悬挂与 provider 收下 run-task 却不回 task-started
+/// 是同一种失败,只是发生在更早一个阶段。
+pub const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Fun-ASR 实时 client。
 #[derive(Debug, Clone)]
 pub struct FunAsrRealtime {
@@ -78,12 +86,15 @@ pub struct FunAsrRealtime {
 }
 
 impl FunAsrRealtime {
-  pub fn new(credentials: DashScopeCredentials) -> Self {
+  /// 地域是**构造参数**而非可选覆盖:endpoint 由它单独决定,而 `DashScopeRegion::default()`
+  /// 是北京 —— 若地域可缺省,那么 `FunAsrRealtime::new(creds)` 这个最顺手的写法恰好是把
+  /// 音频送出驻留区的写法,且编译期毫无提示。要求显式传入使"忘了设地域"不可拼写。
+  pub fn new(credentials: DashScopeCredentials, region: DashScopeRegion) -> Self {
     Self {
       credentials: Arc::new(credentials),
-      region: DashScopeRegion::default(),
+      region,
       model: DEFAULT_REALTIME_ASR_MODEL.to_string(),
-      start_timeout: Duration::from_secs(10),
+      start_timeout: DEFAULT_START_TIMEOUT,
       idle_timeout: DEFAULT_IDLE_TIMEOUT,
       #[cfg(test)]
       endpoint_override: None,
@@ -92,6 +103,7 @@ impl FunAsrRealtime {
 
   /// 覆盖 WebSocket endpoint —— **仅测试**(对着本地假服务端跑会话级用例)。
   #[cfg(test)]
+  #[must_use]
   pub(crate) fn with_endpoint_for_test(mut self, endpoint: impl Into<String>) -> Self {
     self.endpoint_override = Some(endpoint.into());
     self
@@ -106,26 +118,25 @@ impl FunAsrRealtime {
     self.region.websocket_endpoint().to_string()
   }
 
-  pub fn with_region(mut self, region: DashScopeRegion) -> Self {
-    self.region = region;
-    self
-  }
-
   /// 覆盖模型名。
   ///
   /// **此处不校验**:地域 × 模型族的 fail-closed 校验发生在 `transcribe_realtime` 建连之前
   /// (builder 既不该 panic 也不该返回 `Result`)。需要提前判定用 [`validate_model_for_region`]。
+  #[must_use]
   pub fn with_model(mut self, model: impl Into<String>) -> Self {
     self.model = model.into();
     self
   }
 
+  /// 覆盖建连 + `task-started` 的合计期限(见 [`DEFAULT_START_TIMEOUT`])。
+  #[must_use]
   pub fn with_start_timeout(mut self, timeout: Duration) -> Self {
     self.start_timeout = timeout;
     self
   }
 
   /// 覆盖识别阶段空闲上限(见 [`DEFAULT_IDLE_TIMEOUT`])。
+  #[must_use]
   pub fn with_idle_timeout(mut self, timeout: Duration) -> Self {
     self.idle_timeout = timeout;
     self
@@ -134,6 +145,21 @@ impl FunAsrRealtime {
   /// 生效的地域。
   pub fn region(&self) -> DashScopeRegion {
     self.region
+  }
+
+  /// 生效的模型名。
+  pub fn model(&self) -> &str {
+    &self.model
+  }
+
+  /// 生效的建连 + `task-started` 期限。
+  pub fn start_timeout(&self) -> Duration {
+    self.start_timeout
+  }
+
+  /// 生效的识别阶段空闲上限。
+  pub fn idle_timeout(&self) -> Duration {
+    self.idle_timeout
   }
 }
 
@@ -176,19 +202,73 @@ fn validate_context_items(items: &[String]) -> Result<(), SpeechToTextError> {
 /// provider 取哪个未定义;`format` 撞名甚至会让音频按错误格式解码。静默丢弃同样不行 ——
 /// 那会让"我明明覆盖了 sample_rate"变成不可诊断问题。
 fn validate_provider_options(options: &serde_json::Value) -> Result<(), SpeechToTextError> {
-  let serde_json::Value::Object(map) = options else { return Ok(()) };
+  let map = match options {
+    serde_json::Value::Object(map) => map,
+    // 缺省 = 不覆盖任何东西,合法。
+    serde_json::Value::Null => return Ok(()),
+    // 数组 / 字符串 / 数字等:`build_run_task` 只认 object,其余会被整体丢弃。放行等于让
+    // 一份写成 `[{...}]` 或 JSON 字符串的配置**全部参数静默失效**,连 provider 都到不了。
+    other => {
+      return Err(SpeechToTextError::ConfigInvalid(format!(
+        "provider_options must be a JSON object, got {}",
+        json_type_name(other)
+      )));
+    }
+  };
   let offending: Vec<&str> = RESERVED_OPTION_KEYS
     .iter()
     .copied()
     // 具名布尔覆盖是刻意支持的用法,不算撞名。
     .filter(|k| !BOOL_OVERRIDE_KEYS.contains(k) && map.contains_key(*k))
     .collect();
-  if offending.is_empty() {
-    return Ok(());
+  if !offending.is_empty() {
+    return Err(SpeechToTextError::ConfigInvalid(format!(
+      "provider_options may not override the named parameter(s) {offending:?}; set them on AudioStreamConfig instead"
+    )));
   }
-  Err(SpeechToTextError::ConfigInvalid(format!(
-    "provider_options may not override the named parameter(s) {offending:?}; set them on AudioStreamConfig instead"
-  )))
+  // 具名布尔覆盖给了非布尔值:`read_bool` 的 `as_bool()` 会回 `None` 而退回默认值,同时该 key
+  // 又因在 RESERVED 里被剔出 `extra` —— 既没生效也没报错,provider 那边什么都没收到。
+  // `"false"`(字符串)是 JSON 配置里最常见的写法,恰好命中这条。
+  for key in BOOL_OVERRIDE_KEYS {
+    if let Some(value) = map.get(*key)
+      && !value.is_boolean()
+    {
+      return Err(SpeechToTextError::ConfigInvalid(format!(
+        "provider_options.{key} must be a boolean, got {}",
+        json_type_name(value)
+      )));
+    }
+  }
+  Ok(())
+}
+
+/// BCP-47 标签 → DashScope 认的主语言子标签(`zh-CN` → `zh`)。
+///
+/// provider 的取值表是 `zh` / `en` 这一级;调用方按 BCP-47 传 `zh-CN` 是完全正常的写法
+/// (careos 的 locale 就是这么存的),不该因此被拒。归一发生在最靠近 wire 的一层,且不丢失
+/// 调用方意图 —— `zh-CN` 与 `zh` 对一个只区分语言的识别器是同一件事。空标签整条丢弃。
+fn primary_language_subtags(hints: &[String]) -> Vec<String> {
+  let mut out: Vec<String> = Vec::with_capacity(hints.len());
+  for hint in hints {
+    let primary = hint.split(['-', '_']).next().unwrap_or("").trim().to_ascii_lowercase();
+    if !primary.is_empty() && !out.contains(&primary) {
+      out.push(primary);
+    }
+  }
+  out
+}
+
+/// JSON 值的类型名 —— 错误消息里**只**说类型,不说值(`provider_options` 由调用方填,
+/// 但同一条格式化路径不该给未来某个带 PHI 的字段留缺口)。
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+  match value {
+    serde_json::Value::Null => "null",
+    serde_json::Value::Bool(_) => "boolean",
+    serde_json::Value::Number(_) => "number",
+    serde_json::Value::String(_) => "string",
+    serde_json::Value::Array(_) => "array",
+    serde_json::Value::Object(_) => "object",
+  }
 }
 
 /// 会话**中**的词表更新按 provider 限额裁剪并告警。
@@ -300,8 +380,13 @@ struct ServerHeader {
 #[derive(Debug, Deserialize)]
 struct ResultGeneratedPayload {
   output: ResultOutput,
+  /// 刻意留成未解析的 `Value`,由调用处宽容解析。
+  ///
+  /// 与 `output` 同在一个 `from_value` 里时,provider 改一次 usage 的字段类型(实测见过
+  /// `duration` 回浮点秒)就会让**整包**解析失败 —— 那是 `Protocol` 致命错误,一次成功的
+  /// 转写会因为拿不到用量而全部丢失。计量是 best-effort,识别结果不是。
   #[serde(default)]
-  usage: Option<ResultUsage>,
+  usage: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,10 +396,12 @@ struct TaskFinishedPayload {
 }
 
 /// provider 回的用量。`duration` 以**秒**计(音频时长),是 STT 的计量维度。
+///
+/// `f64` 而非 `u64`:provider 回过小数秒,而用整数类型接会让整条 usage 解析失败。
 #[derive(Debug, Deserialize)]
 struct ResultUsage {
   #[serde(default)]
-  duration: Option<u64>,
+  duration: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -424,7 +511,14 @@ impl SpeechToText for FunAsrRealtime {
         );
       }
 
-      let (ws_stream, _resp) = tokio_tungstenite::connect_async(req).await.map_err(|e| match e {
+      // 期限从**建连之前**起算:TCP / TLS / Upgrade 三段无界时,一台接受连接却不回 101 的
+      // 中间设备就能让事件流永久悬挂 —— 上层请求挂着、界面停在"转写中",降级路径等不到
+      // 触发点。这与 idle_timeout 要消除的失败同型,只是更早。
+      let started_deadline = tokio::time::Instant::now() + start_timeout;
+      let (ws_stream, _resp) = tokio::time::timeout_at(started_deadline, tokio_tungstenite::connect_async(req))
+        .await
+        .map_err(|_| SpeechToTextError::Timeout(format!("dashscope websocket connect exceeded {start_timeout:?}")))?
+        .map_err(|e| match e {
         tokio_tungstenite::tungstenite::Error::Http(resp)
           if resp.status() == 401 || resp.status() == 403 =>
         {
@@ -448,9 +542,8 @@ impl SpeechToText for FunAsrRealtime {
         .map_err(|e| SpeechToTextError::Network(format!("send run-task: {e}")))?;
 
       // 3) 等 task-started。服务端在业务事件之前可能先发 ping —— 这里 MUST 循环跳过
-      // 可忽略帧,否则一个 ping 就打死整次识别。整体期限包在循环**外面**,否则"服务端
-      // 一直发 ping"会无限重置期限。
-      let started_deadline = tokio::time::Instant::now() + start_timeout;
+      // 可忽略帧,否则一个 ping 就打死整次识别。期限沿用建连时那一个(不重新计时),否则
+      // "服务端一直发 ping"或"握手慢"都能把总等待时间叠加成两倍。
       loop {
         let msg = tokio::time::timeout_at(started_deadline, source.next())
           .await
@@ -551,9 +644,13 @@ impl SpeechToText for FunAsrRealtime {
 
       // 5) 持续读事件,合并 segments,直到 task-finished / task-failed
       let mut all_segments: Vec<TranscriptSegment> = Vec::new();
-      // 结尾未终结的 partial:服务端在 finish-task 后未 flush 就关连接时,最后一句只以
-      // Partial 出现过。若丢掉它,UI 上显示过的末句不会进最终文本,用户以为已收录。
-      let mut trailing_partial: Option<TranscriptSegment> = None;
+      // 结尾未终结的 partial 也进 `all_segments`,只是记住它的位置:服务端在 finish-task 后
+      // 未 flush 就关连接时,最后一句只以 Partial 出现过——丢掉它,UI 上显示过的末句就不会进
+      // 最终文本,用户以为已收录。
+      //
+      // 记位置而不是在旁边另存一份 segment:两处存储意味着「收尾时别忘了把 pending 补回去」
+      // 这条纪律只活在一个人的记性里,而 truncate 让"临时的那一段"在被取代时自然消失。
+      let mut partial_idx: Option<usize> = None;
       // provider 的 usage.duration 语义(累计 vs 每句)未经实测确认,故 result-generated
       // 上取 max、task-finished 上无条件覆盖(它是权威值)。两种假设下都不会更差。
       let mut duration_ms: Option<u64> = None;
@@ -580,12 +677,16 @@ impl SpeechToText for FunAsrRealtime {
             if let Some(seen) = seen {
               duration_ms = Some(duration_ms.map_or(seen, |cur| cur.max(seen)));
             }
+            // 每段恰好复制一次:累积器与下游事件各需要一份所有权,这一份无从省去。
+            if let Some(i) = partial_idx.take() {
+              all_segments.truncate(i);
+            }
             if segment.is_final {
-              trailing_partial = None;
               all_segments.push(segment.clone());
               yield SttEvent::SegmentFinal(segment);
             } else {
-              trailing_partial = Some(segment.clone());
+              partial_idx = Some(all_segments.len());
+              all_segments.push(segment.clone());
               yield SttEvent::Partial(segment);
             }
           }
@@ -593,9 +694,7 @@ impl SpeechToText for FunAsrRealtime {
             if seen.is_some() {
               duration_ms = seen;
             }
-            if let Some(pending) = trailing_partial.take() {
-              all_segments.push(pending);
-            }
+            // 结尾的 partial 已经在 `all_segments` 里(见 partial_idx),无需在此补回。
             let final_text: String = all_segments.iter().map(|s| s.text.as_str()).collect();
             tracing::debug!(
               provider = PROVIDER_NAME,
@@ -660,7 +759,11 @@ impl SpeechToText for FunAsrRealtime {
 /// **无转码即拒绝**:DashScope 的 `format: "pcm"` 语义是 16-bit signed LE,喂 f32 样本
 /// provider 不报错、只会当 s16 解出噪声;`"opus"` 指裸 Opus 包,吃不下 WebM 容器。两者都会
 /// 产出"链路跑通、无报错、转写是垃圾"的最难诊断故障 —— 与 g711 同样 fail-closed。
-fn provider_audio_format(encoding: AudioEncoding) -> Result<&'static str, SpeechToTextError> {
+///
+/// 与 [`validate_model_for_region`] 同为**可预检**的公共判据:调用方(网关)需要在自己那一层
+/// 就能回答"这个编码这个 provider 收不收",否则只能把接受列表抄一份到网关、再抄一份到前端 ——
+/// 三处副本,新增编码时必然漏掉其中一处。
+pub fn provider_audio_format(encoding: AudioEncoding) -> Result<&'static str, SpeechToTextError> {
   match encoding {
     AudioEncoding::PcmS16Le => Ok("pcm"),
     AudioEncoding::Wav => Ok("wav"),
@@ -693,6 +796,9 @@ const RESERVED_OPTION_KEYS: &[&str] = &[
   "disfluency_removal_enabled",
   "punctuation_prediction_enabled",
   "inverse_text_normalization_enabled",
+  // `build_run_task` 用 `AudioStreamConfig::domain_hint` 无条件覆盖同名 extra key,所以它
+  // 与具名字段一样会静默吃掉调用方的值 —— 归入撞名拒绝,而不是让覆盖悄悄发生。
+  "domain_hint",
 ];
 
 /// `provider_options` 里可被识别为具名布尔覆盖的 key(这些 **不** 进 `extra`)。
@@ -741,7 +847,7 @@ fn build_run_task(
         // 注意:`vocabulary_id` 的 wire 类型(单值 vs 数组)尚未对着实跑的 provider 验证过,
         // 沿用了 Paraformer 实装期的数组形态。pilot 接入时 MUST 实测确认。
         vocabulary_id: config.vocabulary_ids.clone(),
-        language_hints: config.language_hints.clone(),
+        language_hints: primary_language_subtags(&config.language_hints),
         disfluency_removal_enabled: disfluency_removal,
         punctuation_prediction_enabled: punctuation_enabled,
         inverse_text_normalization_enabled: itn_enabled,
@@ -774,8 +880,29 @@ impl ParsedEvent {
 }
 
 /// provider 的 `usage.duration` 以秒计;转 ms 供调用方计量。
+///
+/// 负数与非有限值按"没回用量"处理 —— 一个负的音频时长不是可信数据,记进计量比不记更糟。
 fn usage_duration_ms(usage: Option<ResultUsage>) -> Option<u64> {
-  usage.and_then(|u| u.duration).map(|secs| secs.saturating_mul(1_000))
+  usage
+    .and_then(|u| u.duration)
+    .filter(|secs| secs.is_finite() && *secs >= 0.0)
+    .map(|secs| (secs * 1_000.0).round() as u64)
+}
+
+/// `serde_json::Error` → **不含任何 payload 值**的描述。
+///
+/// 这不是洁癖:`serde_json` 在类型不匹配(`Category::Data`)时会把实际值渲染进 Display ——
+/// `invalid type: string "张奶奶体温三十八度", expected struct ResultSentence`。服务端消息体
+/// 里就是转写文本,而该错误会一路进 RPC 错误体与服务端日志。故只取类别与位置:定位一个
+/// 结构漂移足够了,而值本身从来不是诊断所必需的。
+fn redacted_json_error(e: &serde_json::Error) -> String {
+  let kind = match e.classify() {
+    serde_json::error::Category::Io => "io error",
+    serde_json::error::Category::Syntax => "malformed json",
+    serde_json::error::Category::Data => "unexpected shape",
+    serde_json::error::Category::Eof => "truncated json",
+  };
+  format!("{kind} at line {} column {}", e.line(), e.column())
 }
 
 /// 解析一帧服务端消息。
@@ -787,8 +914,10 @@ fn usage_duration_ms(usage: Option<ResultUsage>) -> Option<u64> {
 /// 这个三分是刻意的:早先把两类合并成同一个 `Protocol` 错误,主循环只能一律 `continue`,
 /// 结果是 payload 结构一变就静默丢掉全部识别结果 —— 流仍以成功结束、text 为空。
 fn parse_server_event(msg: &Message) -> Result<Option<ParsedEvent>, SpeechToTextError> {
-  let text = match msg {
-    Message::Text(t) => t.to_string(),
+  // 借用而非 `to_string()`:每帧一份转写文本的堆副本,用完不清零、散落在堆上,而 serde
+  // 从 `&str` 解析同样可行。
+  let text: &str = match msg {
+    Message::Text(t) => t.as_str(),
     // 服务端发二进制说明协议已经错位,继续读只会读到更多垃圾。
     Message::Binary(_) => return Err(SpeechToTextError::Protocol("unexpected binary frame from server".into())),
     Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => return Ok(None),
@@ -798,16 +927,19 @@ fn parse_server_event(msg: &Message) -> Result<Option<ParsedEvent>, SpeechToText
     }
   };
 
-  // PHI 纪律:错误消息 MUST NOT 带 body —— 服务端消息体里就是转写文本。
-  let parsed: ServerMessage = serde_json::from_str(&text)
-    .map_err(|e| SpeechToTextError::Protocol(format!("parse {PROVIDER_NAME} server message failed: {e}")))?;
+  // PHI 纪律:错误消息 MUST NOT 带 body —— 服务端消息体里就是转写文本。`{e}` 不满足这一点,
+  // 见 [`redacted_json_error`]。
+  let parsed: ServerMessage = serde_json::from_str(text).map_err(|e| {
+    SpeechToTextError::Protocol(format!("parse {PROVIDER_NAME} server message failed: {}", redacted_json_error(&e)))
+  })?;
 
   match parsed.header.event.as_str() {
     "task-started" => Ok(Some(ParsedEvent::Started)),
     "result-generated" => {
-      let payload: ResultGeneratedPayload = serde_json::from_value(parsed.payload)
-        .map_err(|e| SpeechToTextError::Protocol(format!("parse result-generated payload: {e}")))?;
-      let duration_ms = usage_duration_ms(payload.usage);
+      let payload: ResultGeneratedPayload = serde_json::from_value(parsed.payload).map_err(|e| {
+        SpeechToTextError::Protocol(format!("parse result-generated payload: {}", redacted_json_error(&e)))
+      })?;
+      let duration_ms = usage_duration_ms(serde_json::from_value::<ResultUsage>(payload.usage).ok());
       let segment = TranscriptSegment {
         text: payload.output.sentence.text,
         begin_ms: payload.output.sentence.begin_time,
@@ -867,7 +999,11 @@ mod tests {
   }
 
   fn provider() -> FunAsrRealtime {
-    FunAsrRealtime::new(DashScopeCredentials { api_key: "x".into(), workspace_id: None })
+    provider_in(DashScopeRegion::Beijing)
+  }
+
+  fn provider_in(region: DashScopeRegion) -> FunAsrRealtime {
+    FunAsrRealtime::new(DashScopeCredentials { api_key: "x".into(), workspace_id: None }, region)
   }
 
   fn empty_uplink() -> SttUplinkStream {
@@ -952,10 +1088,65 @@ mod tests {
   #[test]
   fn parse_errors_never_echo_the_message_body() {
     // 服务端消息体里就是转写文本 —— 它 MUST NOT 进错误链。
-    let body = r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"text":123}}},"secret":"张奶奶体温三十八度"}"#;
-    let err = parse_server_event(&Message::Text(body.into())).unwrap_err();
-    let rendered = format!("{err}");
-    assert!(!rendered.contains("张奶奶"), "transcript leaked into the error: {rendered}");
+    //
+    // 三种形态都要覆盖,因为 serde_json 只在**类型不匹配**(Category::Data)时才把实际值渲染
+    // 进 Display。早先这条测试把 PHI 放在未知顶层字段上 —— serde 直接忽略该字段,于是测试
+    // 通过而真正会回显的路径从未被验证过。
+    let leaks = [
+      // ① sentence 整体是字符串而非对象 → "invalid type: string \"…\", expected struct ResultSentence"
+      r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":"张奶奶体温三十八度"}}}"#,
+      // ② 顶层就是一个 JSON 字符串标量。
+      r#""张奶奶体温三十八度""#,
+      // ③ text 字段类型不符,同一段文本出现在别处。
+      r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"text":["张奶奶体温三十八度"]}}}}"#,
+    ];
+    for body in leaks {
+      let err = parse_server_event(&Message::Text(body.into())).unwrap_err();
+      let rendered = format!("{err}");
+      assert!(!rendered.contains("张奶奶"), "transcript leaked into the error: {rendered}");
+      // 仍要能定位问题:类别 + 行列。
+      assert!(rendered.contains("line"), "error lost its position information: {rendered}");
+    }
+  }
+
+  #[test]
+  fn a_broken_usage_field_does_not_discard_the_transcript() {
+    // 计量是 best-effort,识别结果不是。usage 与 output 同在一个 payload 里,若共用一次
+    // 解析,provider 改一次 usage 的类型就会让整段转写以 Protocol 错误丢掉。
+    let msg = Message::Text(
+      r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"text":"体温三十八度","sentence_end":true}},"usage":{"duration":"not-a-number"}}}"#
+        .into(),
+    );
+    match parse_server_event(&msg).unwrap() {
+      Some(ParsedEvent::ResultGenerated { segment, duration_ms }) => {
+        assert_eq!(segment.text, "体温三十八度");
+        assert_eq!(duration_ms, None, "a broken usage must read as 'no usage', not as a value");
+      }
+      other => panic!("expected ResultGenerated, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn fractional_usage_seconds_are_kept() {
+    // provider 回过小数秒;用整数类型接会让整条 usage 解析失败(并在合并解析时连转写一起丢)。
+    let msg = Message::Text(
+      r#"{"header":{"event":"result-generated"},"payload":{"output":{"sentence":{"text":"好","sentence_end":true}},"usage":{"duration":2.5}}}"#
+        .into(),
+    );
+    match parse_server_event(&msg).unwrap() {
+      Some(ParsedEvent::ResultGenerated { duration_ms, .. }) => assert_eq!(duration_ms, Some(2_500)),
+      other => panic!("expected ResultGenerated, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn a_negative_usage_duration_is_treated_as_absent() {
+    let msg =
+      Message::Text(r#"{"header":{"event":"task-finished"},"payload":{"output":{},"usage":{"duration":-1}}}"#.into());
+    match parse_server_event(&msg).unwrap() {
+      Some(ParsedEvent::Finished { duration_ms }) => assert_eq!(duration_ms, None),
+      other => panic!("expected Finished, got {other:?}"),
+    }
   }
 
   #[test]
@@ -1055,7 +1246,7 @@ mod tests {
   #[tokio::test]
   async fn transcribe_rejects_region_model_mismatch_before_connecting() {
     // 校验 MUST 在建连之前:endpoint 不可达也应拿到 ConfigInvalid 而非 Network。
-    let p = provider().with_region(DashScopeRegion::Singapore).with_model("paraformer-realtime-v2");
+    let p = provider_in(DashScopeRegion::Singapore).with_model("paraformer-realtime-v2");
     match expect_err(p.transcribe_realtime(empty_uplink(), cfg()).await) {
       SpeechToTextError::ConfigInvalid(msg) => assert!(msg.contains("singapore"), "{msg}"),
       other => panic!("expected ConfigInvalid, got {other:?}"),
@@ -1071,7 +1262,7 @@ mod tests {
       "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference"
     );
     assert_eq!(DashScopeRegion::Beijing.websocket_endpoint(), "wss://dashscope.aliyuncs.com/api-ws/v1/inference");
-    let p = provider().with_region(DashScopeRegion::Singapore);
+    let p = provider_in(DashScopeRegion::Singapore);
     assert_eq!(p.region(), DashScopeRegion::Singapore);
     assert_eq!(p.model(), DEFAULT_REALTIME_ASR_MODEL);
     assert_eq!(p.provider_name(), PROVIDER_NAME);
@@ -1210,6 +1401,58 @@ mod tests {
     let ok =
       AudioStreamConfig { provider_options: serde_json::json!({ "punctuation_prediction_enabled": false }), ..cfg() };
     validate_provider_options(&ok.provider_options).unwrap();
+  }
+
+  #[test]
+  fn domain_hint_collision_is_rejected_like_any_other_named_parameter() {
+    // `build_run_task` 用 config.domain_hint 无条件覆盖同名 extra key —— 放行等于让调用方
+    // 的值被静默吃掉,而"撞名一律拒绝"的规则说好了不这么干。
+    let err = validate_provider_options(&serde_json::json!({ "domain_hint": "finance" })).unwrap_err();
+    assert!(format!("{err}").contains("domain_hint"), "{err}");
+  }
+
+  #[test]
+  fn a_named_boolean_override_given_a_non_boolean_is_rejected() {
+    // `"false"`(字符串)是 JSON 配置里最常见的写法。放行的话:as_bool() 回 None → 退回默认
+    // 值,同时该 key 又因在 RESERVED 里被剔出 extra —— 既没生效也没报错,不可诊断。
+    for value in [serde_json::json!("false"), serde_json::json!(0), serde_json::json!(null)] {
+      let options = serde_json::json!({ "punctuation_prediction_enabled": value });
+      let err = validate_provider_options(&options).unwrap_err();
+      let msg = format!("{err}");
+      assert!(msg.contains("punctuation_prediction_enabled"), "{msg}");
+      assert!(msg.contains("must be a boolean"), "{msg}");
+    }
+  }
+
+  #[test]
+  fn provider_options_that_are_not_an_object_are_rejected() {
+    // build_run_task 只认 object,其余整体丢弃 —— 一份写成数组或 JSON 字符串的配置会让
+    // **全部**参数静默失效,连 provider 都到不了。
+    for options in [
+      serde_json::json!([{ "max_sentence_silence": 800 }]),
+      serde_json::json!("{\"max_sentence_silence\":800}"),
+      serde_json::json!(42),
+    ] {
+      let err = validate_provider_options(&options).unwrap_err();
+      assert!(format!("{err}").contains("must be a JSON object"), "{err}");
+    }
+    // 缺省(Null)是"不覆盖任何东西",合法。
+    validate_provider_options(&serde_json::Value::Null).unwrap();
+  }
+
+  #[test]
+  fn language_hints_are_reduced_to_primary_subtags() {
+    // careos 的 locale 是 `zh-CN`,而 provider 的取值表是 `zh` 这一级。带地区的 BCP-47 标签
+    // MUST NOT 因此被拒,也 MUST NOT 原样下发。
+    assert_eq!(primary_language_subtags(&["zh-CN".into(), "en-US".into()]), vec!["zh", "en"]);
+    // 归一后重复的标签合并,顺序保持。
+    assert_eq!(primary_language_subtags(&["zh-CN".into(), "zh-TW".into(), "en".into()]), vec!["zh", "en"]);
+    // 空白项整条丢弃,不产出空标签。
+    assert_eq!(primary_language_subtags(&["".into(), "  ".into(), "JA".into()]), vec!["ja"]);
+
+    let config = AudioStreamConfig { language_hints: vec!["zh-CN".into()], ..cfg() };
+    let v: serde_json::Value = serde_json::from_str(&run_task_wire(&config)).unwrap();
+    assert_eq!(v["payload"]["parameters"]["language_hints"], serde_json::json!(["zh"]));
   }
 
   #[test]

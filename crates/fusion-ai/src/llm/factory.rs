@@ -31,6 +31,14 @@ pub enum LlmProviderConfig {
     region: DashScopeRegion,
     default_chat_model: String,
     timeout: Option<Duration>,
+    /// 覆盖由 `region` 决定的 chat 兼容端点。`None` = 用 region 的官方端点(生产恒为此)。
+    ///
+    /// 与 `DeepSeek { endpoint }` 一类字段的**性质不同**,故命名上刻意区分:那些 vendor 本就
+    /// 支持自建 / 代理端点,endpoint 是凭证的一部分;dashscope 的端点由 `region` 单独决定,
+    /// 而 `region` 又是本仓驻留档的判据。因此本字段 MUST NOT 由凭证或租户配置填充 ——
+    /// 那等于让被判定方自报判据。它只承载**部署形态**的注入(如集成测试对着本地假服务端跑),
+    /// 由进程级配置提供,且提供方 MUST 明确告知该进程的驻留标注不可信。
+    base_url_override: Option<String>,
   },
   DeepSeek {
     api_key: String,
@@ -92,8 +100,12 @@ impl LlmProviderConfig {
 /// 子类型，caller 应把错误透传给 ws handshake handler，UI 给出明确报错。
 pub fn build_provider(cfg: LlmProviderConfig) -> Result<SharedLlmChatProvider, LlmError> {
   match cfg {
-    LlmProviderConfig::Qwen { api_key, workspace_id, region, default_chat_model, timeout } => {
+    LlmProviderConfig::Qwen { api_key, workspace_id, region, default_chat_model, timeout, base_url_override } => {
       let p = QwenChatProvider::new(api_key, workspace_id, region, default_chat_model, timeout)?;
+      let p = match base_url_override.filter(|s| !s.trim().is_empty()) {
+        Some(url) => p.with_base_url(url),
+        None => p,
+      };
       Ok(Arc::new(p) as Arc<dyn LlmChatProvider>)
     }
     LlmProviderConfig::DeepSeek { api_key, endpoint, default_chat_model, timeout } => {
@@ -119,18 +131,32 @@ pub fn build_provider(cfg: LlmProviderConfig) -> Result<SharedLlmChatProvider, L
 mod tests {
   use super::*;
 
-  #[test]
-  fn dispatches_qwen() {
-    let cfg = LlmProviderConfig::Qwen {
+  fn qwen_cfg(base_url_override: Option<String>) -> LlmProviderConfig {
+    LlmProviderConfig::Qwen {
       api_key: "sk".into(),
       workspace_id: None,
       region: DashScopeRegion::Beijing,
       default_chat_model: DEFAULT_MODEL_QWEN.into(),
       timeout: None,
-    };
-    let p = build_provider(cfg).unwrap();
+      base_url_override,
+    }
+  }
+
+  #[test]
+  fn dispatches_qwen() {
+    let p = build_provider(qwen_cfg(None)).unwrap();
     assert_eq!(p.provider_id(), LlmProviderId::Qwen);
     assert_eq!(p.default_model(), "qwen3.7-plus");
+  }
+
+  #[test]
+  fn a_blank_base_url_override_is_the_same_as_none() {
+    // 配置文件里留空字符串是最常见的「我没配」写法;把它当成一个真的 base_url 会让
+    // transport 拿到空 host,失败点离原因很远。
+    for blank in [Some(String::new()), Some("   ".to_string())] {
+      let p = build_provider(qwen_cfg(blank)).unwrap();
+      assert_eq!(p.provider_id(), LlmProviderId::Qwen);
+    }
   }
 
   #[test]

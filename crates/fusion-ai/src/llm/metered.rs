@@ -117,6 +117,12 @@ pub struct AiUsageCtx {
   pub session_id: Option<Uuid>,
   /// 调用种类（`'ai_chat'` | ...）。
   pub request_kind: String,
+  /// 本次调用**实际**落地的凭证区域（`'singapore'` | `'beijing'`）；`None` = 该 provider
+  /// 无区域概念（区域由 vendor 端点自身决定，本层无从标注）。
+  ///
+  /// 合规「数据存放地」清单以此为标注来源，故取值 MUST 来自调用完成后已知的真实区域，
+  /// MUST NOT 取自路由配置表的自报字段——凭证 config 整体加密，路由层拿不到明文 region。
+  pub resolved_region: Option<String>,
 }
 
 /// 一条模型计量事件 —— 落 `ai_model_usage_events`（hylx_ai 库）。
@@ -150,6 +156,8 @@ pub struct AiUsageEvent {
   /// chat 调用恒为 `None`。provider 未回时长时也为 `None`：计量是 best-effort，
   /// MUST NOT 为了「有个数」而编造一个值。
   pub audio_duration_ms: Option<i64>,
+  /// 实际落地的凭证区域，chat 与 STT 共用。语义见 [`AiUsageCtx::resolved_region`]。
+  pub resolved_region: Option<String>,
 }
 
 impl AiUsageEvent {
@@ -182,6 +190,7 @@ impl AiUsageEvent {
       request_kind: ctx.request_kind.clone(),
       latency_ms,
       audio_duration_ms: None,
+      resolved_region: ctx.resolved_region.clone(),
     }
   }
 
@@ -216,6 +225,7 @@ impl AiUsageEvent {
       request_kind: ctx.request_kind.clone(),
       latency_ms,
       audio_duration_ms: Some(audio_duration_ms),
+      resolved_region: ctx.resolved_region.clone(),
     }
   }
 }
@@ -342,6 +352,8 @@ mod tests {
       credential_id: Some(Uuid::now_v7()),
       session_id: Some(Uuid::now_v7()),
       request_kind: "ai_chat".into(),
+      // deepseek 无区域概念——`None` 是「该 provider 不可标注」，不是「未校验」。
+      resolved_region: None,
     }
   }
 

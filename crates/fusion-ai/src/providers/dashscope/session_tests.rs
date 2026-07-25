@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
 use super::fun_asr::FunAsrRealtime;
-use crate::providers::dashscope::DashScopeCredentials;
+use crate::providers::dashscope::{DashScopeCredentials, DashScopeRegion};
 use crate::speech_to_text::{AudioStreamConfig, SpeechToText, SpeechToTextError, SttEvent, SttUplink, SttUplinkStream};
 
 /// 服务端脚本:收到什么就回什么。
@@ -30,8 +30,23 @@ pub struct ServerHandle {
   pub received: Arc<Mutex<Vec<Message>>>,
 }
 
-/// 启动假服务端,返回 (ws_url, 收到的帧, 服务端任务句柄)。
-async fn spawn_server(script: Script) -> (String, Arc<Mutex<Vec<Message>>>, tokio::task::JoinHandle<()>) {
+/// 假服务端任务的存活期绑定在作用域上。
+///
+/// 手工在断言之后写 `server.abort()` 有个静默的坑:断言失败会 panic,那一行就永远执行不到,
+/// 任务连同它持有的监听端口一起泄漏到测试进程结束。Drop 覆盖每一条退出路径。
+pub struct ServerGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for ServerGuard {
+  fn drop(&mut self) {
+    self.0.abort();
+  }
+}
+
+/// 启动假服务端,返回 (ws_url, 收到的帧, 存活守卫)。
+///
+/// 守卫 MUST 绑定到一个具名变量(`let (_url, _rx, _server) = ...`);写成 `_` 会当场 drop,
+/// 服务端还没接受连接就被杀掉。
+async fn spawn_server(script: Script) -> (String, Arc<Mutex<Vec<Message>>>, ServerGuard) {
   let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
   let addr = listener.local_addr().expect("addr");
   let received = Arc::new(Mutex::new(Vec::new()));
@@ -42,11 +57,11 @@ async fn spawn_server(script: Script) -> (String, Arc<Mutex<Vec<Message>>>, toki
     let inner = script(ServerHandle { ws, received: received_for_task });
     let _ = inner.await;
   });
-  (format!("ws://{addr}"), received, handle)
+  (format!("ws://{addr}"), received, ServerGuard(handle))
 }
 
 fn provider(endpoint: &str) -> FunAsrRealtime {
-  FunAsrRealtime::new(DashScopeCredentials { api_key: "test-key".into(), workspace_id: None })
+  FunAsrRealtime::new(DashScopeCredentials { api_key: "test-key".into(), workspace_id: None }, DashScopeRegion::Beijing)
     .with_endpoint_for_test(endpoint)
     .with_start_timeout(Duration::from_secs(3))
     .with_idle_timeout(Duration::from_secs(3))
@@ -118,7 +133,7 @@ async fn happy_path_yields_started_partial_final_and_finished() {
       let _ = tx.send(finished(Some(5))).await;
     })
   });
-  let (url, received, server) = spawn_server(script).await;
+  let (url, received, _server) = spawn_server(script).await;
 
   let events = provider(&url)
     .transcribe_realtime(audio(vec![b"aaaa", b"bbbb"]), cfg())
@@ -149,7 +164,6 @@ async fn happy_path_yields_started_partial_final_and_finished() {
   assert!(texts.first().is_some_and(|t| t.contains("run-task")), "{texts:?}");
   assert!(texts.iter().any(|t| t.contains("finish-task")), "{texts:?}");
   drop(frames);
-  server.abort();
 }
 
 #[tokio::test]
@@ -170,14 +184,13 @@ async fn a_ping_before_task_started_does_not_kill_the_session() {
       let _ = tx.send(finished(Some(1))).await;
     })
   });
-  let (url, _rx, server) = spawn_server(script).await;
+  let (url, _rx, _server) = spawn_server(script).await;
 
   let events = provider(&url).transcribe_realtime(audio(vec![b"aa"]), cfg()).await.expect("stream opens");
   let (events, err) = drain(events).await;
   assert!(err.is_none(), "a ping must be ignorable, got {err:?}");
   assert!(matches!(events.first(), Some(SttEvent::Started { .. })));
   assert!(matches!(events.last(), Some(SttEvent::TaskFinished(_))));
-  server.abort();
 }
 
 #[tokio::test]
@@ -199,7 +212,7 @@ async fn a_malformed_result_payload_fails_the_stream_instead_of_yielding_an_empt
       tokio::time::sleep(Duration::from_secs(2)).await;
     })
   });
-  let (url, _rx, server) = spawn_server(script).await;
+  let (url, _rx, _server) = spawn_server(script).await;
 
   let events = provider(&url).transcribe_realtime(audio(vec![b"aa"]), cfg()).await.expect("stream opens");
   let (events, err) = drain(events).await;
@@ -208,7 +221,6 @@ async fn a_malformed_result_payload_fails_the_stream_instead_of_yielding_an_empt
     !events.iter().any(|e| matches!(e, SttEvent::TaskFinished(_))),
     "MUST NOT report a successful empty transcript"
   );
-  server.abort();
 }
 
 #[tokio::test]
@@ -230,7 +242,7 @@ async fn a_trailing_partial_is_kept_in_the_final_transcript() {
       let _ = tx.send(finished(Some(4))).await;
     })
   });
-  let (url, _rx, server) = spawn_server(script).await;
+  let (url, _rx, _server) = spawn_server(script).await;
 
   let events = provider(&url).transcribe_realtime(audio(vec![b"aa"]), cfg()).await.expect("stream opens");
   let (events, err) = drain(events).await;
@@ -239,7 +251,6 @@ async fn a_trailing_partial_is_kept_in_the_final_transcript() {
     Some(SttEvent::TaskFinished(r)) => assert_eq!(r.text, "血压一百二心率八十", "末句未终结 partial 也要进最终文本"),
     other => panic!("expected TaskFinished, got {other:?}"),
   }
-  server.abort();
 }
 
 #[tokio::test]
@@ -258,7 +269,7 @@ async fn task_failed_terminates_with_a_provider_error_carrying_retryability() {
       tokio::time::sleep(Duration::from_secs(2)).await;
     })
   });
-  let (url, _rx, server) = spawn_server(script).await;
+  let (url, _rx, _server) = spawn_server(script).await;
 
   let events = provider(&url).transcribe_realtime(audio(vec![b"aa"]), cfg()).await.expect("stream opens");
   let (events, err) = drain(events).await;
@@ -271,7 +282,6 @@ async fn task_failed_terminates_with_a_provider_error_carrying_retryability() {
   }
   // 同一次失败 MUST 只报一遍:事件流里不该再有第二份错误载体。
   assert!(events.iter().all(|e| !matches!(e, SttEvent::TaskFinished(_))));
-  server.abort();
 }
 
 #[tokio::test]
@@ -291,7 +301,7 @@ async fn a_context_update_is_sent_as_continue_task_mid_session() {
       let _ = tx.send(finished(Some(1))).await;
     })
   });
-  let (url, received, server) = spawn_server(script).await;
+  let (url, received, _server) = spawn_server(script).await;
 
   let uplink: SttUplinkStream = Box::pin(futures::stream::iter(vec![
     SttUplink::Audio(Bytes::from_static(b"aaaa")),
@@ -310,7 +320,6 @@ async fn a_context_update_is_sent_as_continue_task_mid_session() {
     .expect("a ContextUpdate must reach the provider as continue-task");
   assert!(continue_task.contains("利伐沙班"), "{continue_task}");
   drop(frames);
-  server.abort();
 }
 
 #[tokio::test]
@@ -331,7 +340,7 @@ async fn an_empty_context_update_is_a_no_op_not_a_clear() {
       let _ = tx.send(finished(None)).await;
     })
   });
-  let (url, received, server) = spawn_server(script).await;
+  let (url, received, _server) = spawn_server(script).await;
 
   let uplink: SttUplinkStream = Box::pin(futures::stream::iter(vec![SttUplink::ContextUpdate(vec!["  ".to_string()])]));
   let events = provider(&url).transcribe_realtime(uplink, cfg()).await.expect("stream opens");
@@ -344,7 +353,6 @@ async fn an_empty_context_update_is_a_no_op_not_a_clear() {
     "an all-blank context update must not hit the wire"
   );
   drop(frames);
-  server.abort();
 }
 
 #[tokio::test]
@@ -359,7 +367,7 @@ async fn a_stalled_provider_times_out_instead_of_hanging_forever() {
       tokio::time::sleep(Duration::from_secs(30)).await;
     })
   });
-  let (url, _rx, server) = spawn_server(script).await;
+  let (url, _rx, _server) = spawn_server(script).await;
 
   let p = provider(&url).with_idle_timeout(Duration::from_millis(300));
   let events = p.transcribe_realtime(audio(vec![b"aa"]), cfg()).await.expect("stream opens");
@@ -367,27 +375,65 @@ async fn a_stalled_provider_times_out_instead_of_hanging_forever() {
     .await
     .expect("the stream must terminate on its own, not hang");
   assert!(matches!(err, Some(SpeechToTextError::Timeout(_))), "expected an idle timeout, got {err:?}");
-  server.abort();
+}
+
+#[tokio::test]
+async fn a_connection_that_never_upgrades_times_out_instead_of_hanging() {
+  // 挂死的中间设备:接受 TCP(与 TLS),但永不回 101。若期限只从"连上之后"起算,
+  // `connect_async` 会永久 pending —— 上层请求挂着、界面停在"转写中",与 provider 收下
+  // run-task 却不回 task-started 是同一种失败,只是发生在更早一个阶段。
+  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let addr = listener.local_addr().unwrap();
+  let _holder = ServerGuard(tokio::spawn(async move {
+    // 收下连接后一直握着不放:不回任何字节,也不关闭。
+    let _conn = listener.accept().await;
+    std::future::pending::<()>().await;
+  }));
+
+  let p = FunAsrRealtime::new(
+    DashScopeCredentials { api_key: "test-key".into(), workspace_id: None },
+    DashScopeRegion::Beijing,
+  )
+  .with_endpoint_for_test(format!("ws://{addr}"))
+  .with_start_timeout(Duration::from_millis(300));
+  let events = p.transcribe_realtime(audio(vec![b"aa"]), cfg()).await.expect("stream opens");
+  let (evs, err) = tokio::time::timeout(Duration::from_secs(5), drain(events))
+    .await
+    .expect("the stream must terminate on its own, not hang");
+  assert!(evs.is_empty(), "nothing can be recognised before the handshake completes: {evs:?}");
+  assert!(matches!(err, Some(SpeechToTextError::Timeout(_))), "expected a connect timeout, got {err:?}");
 }
 
 #[tokio::test]
 async fn dropping_the_event_stream_aborts_the_uplink_pump() {
   // 消费方断连时,detach 的上行泵会一直持有 ws sink 并无限拉取(可能是活麦克风的)音频。
-  let script: Script = Arc::new(|h: ServerHandle| {
+  //
+  // 判据是**假服务端观察到连接关闭**,不是"睡一会儿再看计数有没有涨":后者要用挂钟窗口证明
+  // 一件否定的事(此后没有再拉),CI 负载一高就 flaky,而且窗口取多长永远说不清。泵被 abort →
+  // 它持有的 ws sink 释放 → 服务端的 `rx.next()` 返回 None —— 那是一个确定性事件,可以等。
+  let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
+  let closed_tx = Arc::new(Mutex::new(Some(closed_tx)));
+  let script: Script = Arc::new(move |h: ServerHandle| {
+    let closed_tx = closed_tx.clone();
     tokio::spawn(async move {
       let (mut tx, mut rx) = h.ws.split();
       let _ = rx.next().await;
       let _ = tx.send(started()).await;
       while rx.next().await.is_some() {}
+      // 上行走到头 = 客户端那侧的 sink 没了。
+      if let Some(signal) = closed_tx.lock().await.take() {
+        let _ = signal.send(());
+      }
     })
   });
-  let (url, _rx, server) = spawn_server(script).await;
+  let (url, _rx, _server) = spawn_server(script).await;
 
-  // 无限音频流 + 一个观察计数器:泵被 abort 之后计数不再增长。
-  let pulled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-  let pulled_for_stream = pulled.clone();
+  // 无限音频流 + 每帧一个信号,用来断言泵**确实**在拉(否则"关掉之后不拉了"是废话)。
+  // 信号而非计数轮询:单线程 runtime 上 `yield_now` 忙等会把泵饿死,测的就成了调度而非语义。
+  let (pulled_tx, mut pulled_rx) = tokio::sync::mpsc::channel::<()>(1);
   let infinite = futures::stream::repeat_with(move || {
-    pulled_for_stream.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // 满了就丢:这里只关心"至少拉过一帧",不关心拉了几帧。
+    let _ = pulled_tx.try_send(());
     Bytes::from_static(b"aaaa")
   })
   .then(|b| async move {
@@ -399,15 +445,27 @@ async fn dropping_the_event_stream_aborts_the_uplink_pump() {
     .transcribe_realtime(SttUplink::from_audio(infinite), cfg())
     .await
     .expect("stream opens");
-  // 拿到 Started 说明泵已经在跑。
   let first = events.next().await;
   assert!(matches!(first, Some(Ok(SttEvent::Started { .. }))));
-  tokio::time::sleep(Duration::from_millis(80)).await;
+
+  // Started 是在上行泵 spawn **之前** yield 的,generator 就挂在那个 yield 点上——不再 poll
+  // 它就永远走不到 spawn。这一次 poll 让它推进;超时是预期结果(假服务端在 started 之后不再
+  // 发东西),所以这里不断言返回值。
+  //
+  // 早先版本缺了这一步,于是「泵拉过的帧数」始终是 0,而它的断言恰好是「前后两次读数相等」——
+  // 0 == 0 恒真。一个永远通过的测试比没有测试更糟:它让人以为这条语义被守住了。
+  let _ = tokio::time::timeout(Duration::from_millis(200), events.next()).await;
+
+  // 等到泵真的拉过音频再断开,否则测的是"还没开始就停了"。
+  tokio::time::timeout(Duration::from_secs(5), pulled_rx.recv())
+    .await
+    .expect("the uplink pump never pulled a frame")
+    .expect("the audio stream ended on its own");
+
   drop(events);
 
-  let after_drop = pulled.load(std::sync::atomic::Ordering::SeqCst);
-  tokio::time::sleep(Duration::from_millis(200)).await;
-  let later = pulled.load(std::sync::atomic::Ordering::SeqCst);
-  assert_eq!(after_drop, later, "the uplink pump kept pulling audio after the consumer went away");
-  server.abort();
+  tokio::time::timeout(Duration::from_secs(5), closed_rx)
+    .await
+    .expect("the uplink pump kept the connection open after the consumer went away")
+    .expect("the fake server ended without reporting the close");
 }

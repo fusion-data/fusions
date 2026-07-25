@@ -51,24 +51,10 @@ pub enum AudioEncoding {
   Amr,
 }
 
-impl AudioEncoding {
-  /// Provider 通常约定的字面名,如阿里 DashScope 的 `format` 字段。
-  ///
-  /// 注意这是**字面名映射**,不是兼容性断言:`PcmF32Le` 映射到 `"pcm"` 只说明「provider 管
-  /// 这类东西叫 pcm」,不代表它吃 f32 样本。兼容性由各 provider 自行校验。
-  pub fn as_provider_str(self) -> &'static str {
-    match self {
-      Self::PcmS16Le | Self::PcmF32Le => "pcm",
-      Self::G711Ulaw => "g711_ulaw",
-      Self::G711Alaw => "g711_alaw",
-      Self::Opus | Self::WebmOpus => "opus",
-      Self::Wav => "wav",
-      Self::Mp3 => "mp3",
-      Self::Aac => "aac",
-      Self::Amr => "amr",
-    }
-  }
-}
+// 这里刻意**没有** `as_provider_str`:一个「字面名映射」在两个 provider 之前无从归纳,而唯一
+// 实装的 provider 需要的恰恰不是它 —— `PcmF32Le → "pcm"` / `WebmOpus → "opus"` 正是
+// `fun_asr::provider_audio_format` 要 fail-closed 拒绝的两组混淆。真要下发什么名字,由各
+// provider 自己的可预检函数回答。
 
 /// 实时 STT 会话的音频流配置。
 ///
@@ -78,7 +64,7 @@ impl AudioEncoding {
 /// `#[non_exhaustive]`:那会同时禁掉 `..base` 更新语法,而它正是本结构最主要的用法。
 /// 调用方 SHOULD 用 `AudioStreamConfig { channels: 2, ..AudioStreamConfig::pcm_s16le_16k_mono_40ms() }`
 /// 这种写法构造,以免每次字段增补都要改代码。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AudioStreamConfig {
   pub encoding: AudioEncoding,
   pub sample_rate: u32,
@@ -88,12 +74,19 @@ pub struct AudioStreamConfig {
   /// **仅供调用方自查 / 审计**:本值既不下发给 provider,实现也不会据此重新切帧。真实分帧
   /// 完全取决于调用方往 [`SttUplinkStream`] 里推什么。0 = 未声明。
   pub frame_duration_ms: u16,
-  /// 语言候选,如 `["zh", "en"]`。
+  /// 语言候选,BCP-47 标签,如 `["zh", "en"]` 或 `["zh-CN"]`。
+  ///
+  /// 只认主语言子标签的 provider 由实现取主子标签下发(`zh-CN` → `zh`),调用方无需自行裁剪;
+  /// 带地区的标签 MUST NOT 因此被拒。
   pub language_hints: Vec<String>,
   /// **Provider 侧已注册词表的 ID 列表**,不是词条本身。
   ///
   /// 命名易误读,故明说:填 `"利伐沙班"` 不会生效 —— 那是词,不是词表 ID。会话内的临时术语
   /// 走 [`Self::context_items`]。无词表机制的 provider 上本字段是静默 no-op。
+  ///
+  /// **未实测**:DashScope 侧 `vocabulary_id` 的 wire 形态(数组 vs 单值)沿用 Paraformer
+  /// 实装期的数组形态,尚未对着实跑的 provider 验证。首次接入真实凭证时 MUST 实测确认 ——
+  /// 形态不符的表现是 provider 报 `InvalidParameter`,或更糟:静默不生效。
   pub vocabulary_ids: Vec<String>,
   /// 上下文增强词表(词表匹配式修正:每条 MUST 包含待识别原词,纯语义描述效果有限)。
   /// 与 [`Self::vocabulary_ids`] 是两条正交能力,可同时使用。
@@ -111,6 +104,26 @@ pub struct AudioStreamConfig {
   /// 与 provider 具名参数同名的 key 会被拒绝或忽略(各 provider 自行声明),MUST NOT 指望用
   /// 它覆盖 [`Self::sample_rate`] 一类已有字段。
   pub provider_options: serde_json::Value,
+}
+
+/// 手写 `Debug`:`context_items` 与 `provider_options` 是**会离开本进程送到 provider** 的内容,
+/// 前者按约定只放领域术语,但同一份词表在 [`SttUplink::ContextUpdate`] 上是脱敏的 —— 两条路径
+/// 对同样的数据给出不同的打印结果,等于给 `tracing::debug!(?config)` 留了一个后门。故本结构
+/// 与本模块其余公共类型同规:只报形状与长度。
+impl fmt::Debug for AudioStreamConfig {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("AudioStreamConfig")
+      .field("encoding", &self.encoding)
+      .field("sample_rate", &self.sample_rate)
+      .field("channels", &self.channels)
+      .field("frame_duration_ms", &self.frame_duration_ms)
+      .field("language_hints", &self.language_hints)
+      .field("vocabulary_ids_len", &self.vocabulary_ids.len())
+      .field("context_items_len", &self.context_items.len())
+      .field("has_domain_hint", &self.domain_hint.is_some())
+      .field("has_provider_options", &!self.provider_options.is_null())
+      .finish()
+  }
 }
 
 impl AudioStreamConfig {
@@ -259,8 +272,11 @@ pub enum SpeechToTextError {
 
   /// 本 provider 不具备该能力(如只支持流式、不支持批量)。与 [`Self::ConfigInvalid`] 分开是
   /// 为了让"换一个 provider"与"改自己的参数"成为两个可判定的分支。
+  ///
+  /// `provider` 与 [`Self::Provider`] 同名同型(`String`):同一个概念在同一个 enum 里出现两种
+  /// 类型,消费者写起来就要为「哪个变体」而记不同的写法。
   #[error("provider {provider} does not support {capability}")]
-  Unsupported { provider: &'static str, capability: &'static str },
+  Unsupported { provider: String, capability: &'static str },
 
   #[error("auth failed: {0}")]
   Auth(String),
@@ -279,9 +295,9 @@ pub enum SpeechToTextError {
   #[error("timeout: {0}")]
   Timeout(String),
 
-  #[error("cancelled")]
-  Cancelled,
-
+  // 这里刻意**没有** `Cancelled`:取消在本抽象里不是一种"错误",而是消费者 drop 事件流 ——
+  // 流就此结束,没有终态错误可产出(上行泵的 abort 语义由 session 测试守住)。留一个没有任何
+  // 构造点的变体,只会让每个消费者为一件不会发生的事写一条 match 分支。
   #[error(transparent)]
   Other(#[from] anyhow::Error),
 }
@@ -295,10 +311,28 @@ impl SpeechToTextError {
   pub fn is_retryable(&self) -> bool {
     matches!(self, Self::Network(_) | Self::Timeout(_) | Self::Provider { retryable: true, .. })
   }
+
+  /// 这次失败是**调用方**造成的吗?
+  ///
+  /// 与 [`Self::is_retryable`] 正交,回答的是另一个问题:网关该报 `invalid_argument`(你的
+  /// 请求有问题)还是 `internal`(我们坏了)。没有它,网关只能写
+  /// `if is_retryable() { unavailable } else { internal }`,于是 provider 回的
+  /// `InvalidParameter` 变成 500 —— 运维当作服务缺陷立单,而实际上要改的是租户配置。
+  ///
+  /// `Provider` 的归类跟随 provider 自己的错误码表:不可重试的 provider 错误几乎都是参数
+  /// 或配额问题;可重试的是对侧的暂时状态,不是调用方的错。
+  pub fn is_caller_fault(&self) -> bool {
+    match self {
+      Self::ConfigInvalid(_) | Self::Unsupported { .. } | Self::Auth(_) => true,
+      Self::Provider { retryable, .. } => !retryable,
+      Self::Network(_) | Self::Protocol(_) | Self::Timeout(_) | Self::Other(_) => false,
+    }
+  }
 }
 
-/// 音频帧流的别名:每个 `Bytes` 为一帧 PCM/Opus 数据,顺序到达。
-pub type AudioFrameStream = Pin<Box<dyn Stream<Item = Bytes> + Send>>;
+// 这里刻意**没有** `AudioFrameStream` 别名:上行流的公共形状是 [`SttUplinkStream`],纯音频
+// 只是它的一个来源([`SttUplink::from_audio`] 收任意 `Stream<Item = Bytes>`,不要求装箱)。
+// 多一个没有任何签名用到的别名,只是让读者多猜一次两者的关系。
 
 /// 实时识别会话的**上行**项:音频帧,或会话中的控制指令。
 ///
@@ -355,6 +389,19 @@ impl SttUplink {
   {
     Box::pin(futures::stream::select(audio.map(SttUplink::Audio), control.map(SttUplink::ContextUpdate)))
   }
+
+  /// 把一条**已经是** `SttUplink` 的流装箱成上行流。
+  ///
+  /// [`Self::from_audio`] 与 [`Self::merge`] 覆盖的是"两条独立来源"的形状;而当上行本就是
+  /// 一条已保序的混合流(网关把音频与控制帧从同一个 WebSocket 上解出来时正是如此),
+  /// 它们都不适用 —— 没有这个入口,调用方只能自己写 `Box::pin(..)`,把本模块的流类型细节
+  /// 抄进业务代码。
+  pub fn from_stream<S>(items: S) -> SttUplinkStream
+  where
+    S: Stream<Item = SttUplink> + Send + 'static,
+  {
+    Box::pin(items)
+  }
 }
 
 /// 会话上行流的别名。只推音频的调用方用 [`SttUplink::from_audio`] 提升。
@@ -408,7 +455,10 @@ pub trait SpeechToText: Send + Sync {
     _audio: Bytes,
     _config: AudioStreamConfig,
   ) -> Result<TranscriptionResult, SpeechToTextError> {
-    Err(SpeechToTextError::Unsupported { provider: self.provider_name(), capability: "batch transcription" })
+    Err(SpeechToTextError::Unsupported {
+      provider: self.provider_name().to_string(),
+      capability: "batch transcription",
+    })
   }
 }
 
@@ -422,7 +472,7 @@ mod tests {
     assert_eq!(cfg.sample_rate, 16_000);
     assert_eq!(cfg.channels, 1);
     assert_eq!(cfg.frame_duration_ms, 40);
-    assert_eq!(cfg.encoding.as_provider_str(), "pcm");
+    assert_eq!(cfg.encoding, AudioEncoding::PcmS16Le);
     assert!(cfg.context_items.is_empty(), "上下文增强 MUST 默认为空:词表要由调用方显式给出");
     assert!(cfg.vocabulary_ids.is_empty());
   }
@@ -465,7 +515,7 @@ mod tests {
       .is_retryable()
     );
     assert!(!SpeechToTextError::Auth("bad key".into()).is_retryable());
-    assert!(!SpeechToTextError::Unsupported { provider: "x", capability: "batch" }.is_retryable());
+    assert!(!SpeechToTextError::Unsupported { provider: "x".into(), capability: "batch" }.is_retryable());
     assert!(
       !SpeechToTextError::Provider {
         provider: "x".into(),
