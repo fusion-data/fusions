@@ -31,7 +31,9 @@ pub mod prelude {
     outbox_activity,
   };
   #[cfg(feature = "runtime")]
-  pub use hetuflow_runtime::{decide_advance, decide_start, find_next_transition, validate_definition};
+  pub use hetuflow_runtime::{
+    decide_advance, decide_start, find_next_transition, validate_definition, validate_domain_driven,
+  };
   /// 宿主绑定层的编排入口 + 端口 + worker 骨架。
   #[cfg(feature = "service")]
   pub use hetuflow_service::{

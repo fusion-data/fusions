@@ -760,6 +760,35 @@ pub fn validate_definition(nodes: &[WorkflowNode], transitions: &[WorkflowTransi
   Ok(())
 }
 
+/// 领域驱动（domain-driven）链路的图约束：链路的每一次推进 MUST 由调用方的一次 signal 触发，
+/// 引擎自身 MUST NOT 让链路前进或终结。
+///
+/// **判据不是「有没有 timer」**。APPROVAL 节点的 `sla_seconds` 与 `escalation_seconds` 都会排
+/// durable timer，但两者都不推进图：REMINDER 只投通知，ESCALATION 只改 `assignee_role`（活动仍
+/// `Active`，仍等 signal）。判据是**引擎能否自行做出结论性转移**——在本引擎里那等价于
+/// EventWait 超时、通知/指派投递完成、子实例回灌、并行收敛与扇出。
+///
+/// 因此取**白名单**而非黑名单：只放行 Start / Approval / Condition / End / Merge —— 前两者要么
+/// 是入口要么等 signal，后三者是 `resolve_target` 里的同步穿透或终态，都不引入引擎自身的异步推进。
+/// 新增节点类型默认落在白名单外而被拒，失败方向是安全的。
+///
+/// 调用方（宿主）负责决定哪些链路声明为领域驱动；本函数只回答「这张图配不配得上这个声明」。
+pub fn validate_domain_driven(nodes: &[WorkflowNode]) -> Result<()> {
+  for node in nodes {
+    if !matches!(
+      node.kind(),
+      NodeKind::Start | NodeKind::Approval | NodeKind::Condition | NodeKind::End | NodeKind::Merge
+    ) {
+      return Err(FlowError::Validation(format!(
+        "domain-driven definition must not contain node '{}' of kind {:?}: only start / approval / condition / end / merge advance solely on a caller signal",
+        node.id,
+        node.kind()
+      )));
+    }
+  }
+  Ok(())
+}
+
 /// 缺口 C（topology 只读，§5.3.5）：静态拓扑 lint 的单条发现。
 ///
 /// 展示层契约 —— **纯派生视图**，不进实例状态机、不持久化、不内嵌审计字段。
@@ -1852,6 +1881,44 @@ mod tests {
       vec![tr("start", "approval_1", SignalType::Resubmitted), tr("approval_1", "end", SignalType::Approved)];
     let err = validate_definition(&nodes, &transitions).unwrap_err().to_string();
     assert!(err.contains("escalation_seconds missing"), "got: {err}");
+  }
+
+  // ---- domain-driven（pull 形态）图约束 ----
+
+  #[test]
+  fn domain_driven_accepts_signal_only_chain_with_escalation() {
+    // 这是判定的要害：SLA 提醒与升级改派都排 durable timer，但都不推进图，故一条配了
+    // escalation 的纯人工审批链仍然是领域驱动的。按「有没有 timer」切会误判，此测试固化之。
+    let nodes = vec![
+      start_node(),
+      approval_with_escalation("head_nurse_review", "head_nurse", Some(3600), Some(7200), Some("facility_admin")),
+      condition("overnight_gate", "approved_end", vec![("context.overnight", "physician_review")]),
+      approval("physician_review", "physician"),
+      end_with("approved_end", Some("approved")),
+      end_with("rejected_end", Some("rejected")),
+    ];
+    validate_domain_driven(&nodes).unwrap();
+  }
+
+  #[test]
+  fn domain_driven_rejects_event_wait_timeout() {
+    // EventWait 的超时是本引擎里唯一能自行终结链路的机制（TIMEOUT timer →
+    // decide_event_wait_timeout），领域侧 pull 读不到它。
+    let nodes = vec![start_node(), event_wait("wait_1", "evt", Some("end")), end_node()];
+    let err = validate_domain_driven(&nodes).unwrap_err().to_string();
+    assert!(err.contains("wait_1") && err.contains("EventWait"), "got: {err}");
+  }
+
+  #[test]
+  fn domain_driven_rejects_notification_node() {
+    // 通知投递完成会自行推进下游，同样脱离调用方的 signal。
+    let nodes = vec![
+      start_node(),
+      notification("notify_1", Some(RecipientSelector::Role { role_code: "physician".into(), facility_id: None })),
+      end_node(),
+    ];
+    let err = validate_domain_driven(&nodes).unwrap_err().to_string();
+    assert!(err.contains("notify_1"), "got: {err}");
   }
 
   #[test]
