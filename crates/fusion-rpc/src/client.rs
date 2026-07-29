@@ -22,7 +22,7 @@
 //!
 //! 默认值对齐 reqwest 0.13.4 验证过的 connector 默认（`client.rs:303-307,368`）。
 //!
-//! 规约：`docs/references/sdd/service-dependency-contract.md` §4.4。
+//! 规约：`docs/sdd/service-dependency-contract.md` §4.4。
 
 use std::time::Duration;
 
