@@ -48,7 +48,7 @@ impl WebServerBuilder {
     // HTTP/2 (h2c) 自动支持：`axum::serve()` 内部使用 `hyper_util::server::conn::auto::Builder`，
     // 在 axum 的 `http1` + `http2` feature 同时启用时（见 backend/Cargo.toml）对外同时承载
     // HTTP/1.1 与 HTTP/2 cleartext。ConnectRPC bidi-stream 要求 HTTP/2，由此处自动满足。
-    // 规约：docs/sdd/service-dependency-contract.md §4.4
+    // 规约：SDD service-dependency-contract §4.4
     let listener = tokio::net::TcpListener::bind(&conf.server_addr)
       .await
       .map_err(|e| WebError::server_error(format!("bind {} failed: {e}", conf.server_addr)))?;
