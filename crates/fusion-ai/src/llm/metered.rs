@@ -34,6 +34,9 @@ use uuid::Uuid;
 use super::{ChatCompletionRequest, ChatCompletionResponse, LlmChatProvider, LlmError, LlmProviderId, TokenUsage};
 
 /// 调用结局 —— 与 `ai_model_usage_events.outcome` 列 CHECK 约定的字符串一一对应。
+///
+/// DB 列为 SMALLINT（形态 C 自治编号：success=1/ambiguous=2/error=3）。`as_str` 保留为 wire/审计
+/// 串边界，DB 写路径用 [`Self::as_i16`]。
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Outcome {
   /// `chat_complete` 成功且产出可用。
@@ -50,6 +53,24 @@ impl Outcome {
       Self::Success => "success",
       Self::Ambiguous => "ambiguous",
       Self::Error => "error",
+    }
+  }
+
+  /// DB 自治编号（形态 C：success=1/ambiguous=2/error=3）—— `ai_model_usage_events.outcome` 列。
+  pub const fn as_i16(self) -> i16 {
+    match self {
+      Self::Success => 1,
+      Self::Ambiguous => 2,
+      Self::Error => 3,
+    }
+  }
+
+  /// [`Self::as_i16`] 的逆。未知值 → [`Self::Error`]（fail-closed，不静默丢账）。
+  pub const fn from_i16(value: i16) -> Self {
+    match value {
+      1 => Self::Success,
+      2 => Self::Ambiguous,
+      _ => Self::Error,
     }
   }
 }
@@ -80,6 +101,27 @@ impl MatchedScope {
       Self::Tenant => "tenant",
       Self::Platform => "platform",
       Self::SystemDefault => "system_default",
+    }
+  }
+
+  /// DB 自治编号（形态 C：dimension=1/tenant=2/platform=3/system_default=4）——
+  /// `ai_model_usage_events.matched_scope` 列。
+  pub const fn as_i16(self) -> i16 {
+    match self {
+      Self::Dimension => 1,
+      Self::Tenant => 2,
+      Self::Platform => 3,
+      Self::SystemDefault => 4,
+    }
+  }
+
+  /// [`Self::as_i16`] 的逆。未知值 → [`Self::SystemDefault`]（兜底，与 `from_route_str` 同纪律）。
+  pub const fn from_i16(value: i16) -> Self {
+    match value {
+      1 => Self::Dimension,
+      2 => Self::Tenant,
+      3 => Self::Platform,
+      _ => Self::SystemDefault,
     }
   }
 
@@ -373,6 +415,32 @@ mod tests {
     for s in [MatchedScope::Dimension, MatchedScope::Tenant, MatchedScope::Platform, MatchedScope::SystemDefault] {
       assert_eq!(MatchedScope::from_route_str(s.as_str()), s);
     }
+  }
+
+  /// `matched_scope` / `outcome` DB 列已迁至 SMALLINT（形态 C 自治编号）。as_i16 的输出必须
+  /// 与 CHECK 约定的值一一对应，from_i16 必须 round-trip。
+  #[test]
+  fn matched_scope_and_outcome_i16_round_trip_matches_the_check_constraint() {
+    assert_eq!(MatchedScope::Dimension.as_i16(), 1);
+    assert_eq!(MatchedScope::Tenant.as_i16(), 2);
+    assert_eq!(MatchedScope::Platform.as_i16(), 3);
+    assert_eq!(MatchedScope::SystemDefault.as_i16(), 4);
+    for s in [MatchedScope::Dimension, MatchedScope::Tenant, MatchedScope::Platform, MatchedScope::SystemDefault] {
+      assert_eq!(MatchedScope::from_i16(s.as_i16()), s);
+    }
+    // 未知值兜底（与 from_route_str 同纪律）。
+    assert_eq!(MatchedScope::from_i16(0), MatchedScope::SystemDefault);
+    assert_eq!(MatchedScope::from_i16(99), MatchedScope::SystemDefault);
+
+    assert_eq!(Outcome::Success.as_i16(), 1);
+    assert_eq!(Outcome::Ambiguous.as_i16(), 2);
+    assert_eq!(Outcome::Error.as_i16(), 3);
+    for o in [Outcome::Success, Outcome::Ambiguous, Outcome::Error] {
+      assert_eq!(Outcome::from_i16(o.as_i16()), o);
+    }
+    // 未知值 fail-closed → Error。
+    assert_eq!(Outcome::from_i16(0), Outcome::Error);
+    assert_eq!(Outcome::from_i16(99), Outcome::Error);
   }
 
   #[test]

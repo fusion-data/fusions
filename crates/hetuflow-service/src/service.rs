@@ -25,7 +25,7 @@ use hetuflow_runtime::replay::{diff_projection, fold_events, instantiated_activi
 use hetuflow_runtime::{
   ResolveTrace, decide_advance, decide_event_wait_timeout, decide_start, is_join_incoming_signal, validate_definition,
 };
-use hetuflow_sqlx::{PgWorkflowStore, WorkflowStore};
+use hetuflow_sqlx::{PgWorkflowStore, WorkflowStore, activity_result_from_str};
 use serde_json::{Value, json};
 
 use crate::command::{
@@ -728,7 +728,9 @@ impl WorkflowService {
     review_notes: Option<&str>,
   ) -> Result<()> {
     let activity_id = parse_uuid(&activity.id)?;
-    if !STORE.complete_activity_cas(dbx, activity_id, result, actor_user_id, review_notes).await? {
+    // activity.result 落 SMALLINT（B.3）：领域串 → 数值。未知串 / None → None（不落 result）。
+    let result_i16 = result.and_then(activity_result_from_str);
+    if !STORE.complete_activity_cas(dbx, activity_id, result_i16, actor_user_id, review_notes).await? {
       return Err(FlowError::Conflict(format!("activity {} is no longer active", activity.id)));
     }
     STORE.cancel_timers_for_activity(dbx, activity_id).await?;
@@ -1177,7 +1179,7 @@ impl WorkflowService {
   }
 
   async fn complete_instance(&self, dbx: &DbxPostgres, ctx: &mut InstanceCtx, result: WorkflowResult) -> Result<()> {
-    if !STORE.complete_workflow_cas(dbx, ctx.instance_id, result.as_str()).await? {
+    if !STORE.complete_workflow_cas(dbx, ctx.instance_id, result.as_i16()).await? {
       return Err(FlowError::Conflict("instance left 'active' before completion".into()));
     }
     self.append(dbx, ctx, event_type::COMPLETED, json!({ "result": result.as_str() }), None).await?;

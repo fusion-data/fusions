@@ -90,6 +90,32 @@ impl WorkflowStatus {
       _ => WorkflowStatus::Errored,
     }
   }
+
+  /// 落库 wire number（A.5：= proto hylx_careos/workflow.proto WorkflowStatus）。
+  /// pending=1/active=2/completed=3/errored=4/cancelled=5/returned_waiting=6。
+  pub fn as_i16(self) -> i16 {
+    match self {
+      WorkflowStatus::Pending => 1,
+      WorkflowStatus::Active => 2,
+      WorkflowStatus::Completed => 3,
+      WorkflowStatus::Errored => 4,
+      WorkflowStatus::Cancelled => 5,
+      WorkflowStatus::ReturnedWaiting => 6,
+    }
+  }
+
+  /// 从落库数值还原（未知值 → Errored，fail-safe 同 from_db）。
+  pub fn from_i16(n: i16) -> WorkflowStatus {
+    match n {
+      1 => WorkflowStatus::Pending,
+      2 => WorkflowStatus::Active,
+      3 => WorkflowStatus::Completed,
+      4 => WorkflowStatus::Errored,
+      5 => WorkflowStatus::Cancelled,
+      6 => WorkflowStatus::ReturnedWaiting,
+      _ => WorkflowStatus::Errored,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +178,46 @@ impl ActivityType {
       _ => ActivityType::End,
     }
   }
+
+  /// 落库 wire number（A.5：proto ActivityType，按声明序 1..14）。
+  pub fn as_i16(self) -> i16 {
+    match self {
+      ActivityType::Start => 1,
+      ActivityType::Approval => 2,
+      ActivityType::Notification => 3,
+      ActivityType::End => 4,
+      ActivityType::Condition => 5,
+      ActivityType::Parallel => 6,
+      ActivityType::Timer => 7,
+      ActivityType::EventWait => 8,
+      ActivityType::ParallelSplit => 9,
+      ActivityType::ParallelJoin => 10,
+      ActivityType::Assignment => 11,
+      ActivityType::Merge => 12,
+      ActivityType::ForEach => 13,
+      ActivityType::SubWorkflow => 14,
+    }
+  }
+
+  pub fn from_i16(n: i16) -> ActivityType {
+    match n {
+      1 => ActivityType::Start,
+      2 => ActivityType::Approval,
+      3 => ActivityType::Notification,
+      4 => ActivityType::End,
+      5 => ActivityType::Condition,
+      6 => ActivityType::Parallel,
+      7 => ActivityType::Timer,
+      8 => ActivityType::EventWait,
+      9 => ActivityType::ParallelSplit,
+      10 => ActivityType::ParallelJoin,
+      11 => ActivityType::Assignment,
+      12 => ActivityType::Merge,
+      13 => ActivityType::ForEach,
+      14 => ActivityType::SubWorkflow,
+      _ => ActivityType::End,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +247,27 @@ impl ActivityStatus {
       "active" => ActivityStatus::Active,
       "completed" => ActivityStatus::Completed,
       "skipped" => ActivityStatus::Skipped,
+      _ => ActivityStatus::Errored,
+    }
+  }
+
+  /// 落库 wire number（A.5：proto ActivityStatus）。
+  pub fn as_i16(self) -> i16 {
+    match self {
+      ActivityStatus::Pending => 1,
+      ActivityStatus::Active => 2,
+      ActivityStatus::Completed => 3,
+      ActivityStatus::Skipped => 4,
+      ActivityStatus::Errored => 5,
+    }
+  }
+
+  pub fn from_i16(n: i16) -> ActivityStatus {
+    match n {
+      1 => ActivityStatus::Pending,
+      2 => ActivityStatus::Active,
+      3 => ActivityStatus::Completed,
+      4 => ActivityStatus::Skipped,
       _ => ActivityStatus::Errored,
     }
   }
@@ -255,6 +342,24 @@ impl WorkflowResult {
       "approved" => Some(WorkflowResult::Approved),
       "rejected" => Some(WorkflowResult::Rejected),
       "returned" => Some(WorkflowResult::Returned),
+      _ => None,
+    }
+  }
+
+  /// 落库 wire number（A.5：proto WorkflowResult：approved=1/rejected=2/returned=3）。
+  pub fn as_i16(self) -> i16 {
+    match self {
+      WorkflowResult::Approved => 1,
+      WorkflowResult::Rejected => 2,
+      WorkflowResult::Returned => 3,
+    }
+  }
+
+  pub fn from_i16(n: i16) -> Option<WorkflowResult> {
+    match n {
+      1 => Some(WorkflowResult::Approved),
+      2 => Some(WorkflowResult::Rejected),
+      3 => Some(WorkflowResult::Returned),
       _ => None,
     }
   }

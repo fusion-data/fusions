@@ -42,6 +42,60 @@ fn map_db<E: std::fmt::Display>(e: E) -> FlowError {
   FlowError::Storage(e.to_string())
 }
 
+/// activity_instances.result 落 SMALLINT（B.3 自治编号：approved=1/rejected=2/returned=3/completed=4），
+/// 领域模型仍用 Option<String> 承载（无 proto enum）。本函数把读回的数值翻成领域串。
+fn activity_result_to_str(n: i16) -> String {
+  match n {
+    1 => "approved".to_string(),
+    2 => "rejected".to_string(),
+    3 => "returned".to_string(),
+    4 => "completed".to_string(),
+    other => format!("unknown:{other}"),
+  }
+}
+
+/// 反向：领域串 → 落库数值（写入路径用）。未知串 → None（不落 result）。
+pub fn activity_result_from_str(s: &str) -> Option<i16> {
+  match s {
+    "approved" => Some(1),
+    "rejected" => Some(2),
+    "returned" => Some(3),
+    "completed" => Some(4),
+    _ => None,
+  }
+}
+
+/// workflow_activity_outbox.status 落 SMALLINT（B.3：pending=1/leased=2/succeeded=3/dead_letter=4），
+/// 领域 OutboxRecord.status 仍用 String（worker 按串比对），本函数把读回的数值翻成串。
+fn outbox_status_str(n: i16) -> String {
+  match n {
+    1 => "pending".to_string(),
+    2 => "leased".to_string(),
+    3 => "succeeded".to_string(),
+    4 => "dead_letter".to_string(),
+    other => format!("unknown:{other}"),
+  }
+}
+
+/// workflow_timers.timer_kind 落 SMALLINT（B.3：reminder=1/escalation=2/timeout=3），
+/// 领域 TimerRecord.timer_kind 仍用 String（worker 按串路由）。读侧 i16→串、写侧 串→i16。
+fn timer_kind_str(n: i16) -> String {
+  match n {
+    1 => "reminder".to_string(),
+    2 => "escalation".to_string(),
+    3 => "timeout".to_string(),
+    other => format!("unknown:{other}"),
+  }
+}
+
+fn timer_kind_i16(s: &str) -> i16 {
+  match s {
+    "escalation" => 2,
+    "timeout" => 3,
+    _ => 1, // reminder
+  }
+}
+
 /// 把 `ScopeFilter` 推成 ` AND tenant_id = .. [AND facility_id = ANY(..)]`（脱 TaskIdentityScope）。
 fn push_scope(qb: &mut QueryBuilder<Postgres>, scope: &ScopeFilter) -> Result<()> {
   qb.push(" AND tenant_id = ");
@@ -76,9 +130,10 @@ struct InstanceRow {
   workflow_definition_id: uuid::Uuid,
   business_key: String,
   business_type: String,
-  status: String,
+  // status / result 落 SMALLINT（A.5 wire number）。
+  status: i16,
   current_activity_id: Option<uuid::Uuid>,
-  result: Option<String>,
+  result: Option<i16>,
   side_effects_executed: bool,
   context: Option<serde_json::Value>,
   started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -97,9 +152,9 @@ impl InstanceRow {
       workflow_definition_id: self.workflow_definition_id.to_string(),
       business_key: self.business_key,
       business_type: self.business_type,
-      status: WorkflowStatus::from_db(&self.status),
+      status: WorkflowStatus::from_i16(self.status),
       current_activity_id: self.current_activity_id.map(|id| id.to_string()),
-      result: self.result.and_then(|r| WorkflowResult::from_db(&r)),
+      result: self.result.and_then(WorkflowResult::from_i16),
       side_effects_executed: self.side_effects_executed,
       context: self.context,
       started_at: self.started_at,
@@ -116,11 +171,12 @@ struct ActivityRow {
   tenant_id: i64,
   workflow_instance_id: uuid::Uuid,
   activity_definition_id: String,
-  activity_type: String,
-  status: String,
+  // activity_type / status / result 落 SMALLINT（A.5 wire number；result B.3 自治编号）。
+  activity_type: i16,
+  status: i16,
   assignee_role: Option<String>,
   assignee_id: Option<i64>,
-  result: Option<String>,
+  result: Option<i16>,
   review_notes: Option<String>,
   reviewed_by: Option<i64>,
   reviewed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -134,11 +190,13 @@ impl ActivityRow {
       tenant_id: self.tenant_id.to_string(),
       workflow_instance_id: self.workflow_instance_id.to_string(),
       activity_definition_id: self.activity_definition_id,
-      activity_type: ActivityType::from_db(&self.activity_type),
-      status: hetuflow_core::ActivityStatus::from_db(&self.status),
+      activity_type: ActivityType::from_i16(self.activity_type),
+      status: hetuflow_core::ActivityStatus::from_i16(self.status),
       assignee_role: self.assignee_role,
       assignee_id: self.assignee_id.map(|id| id.to_string()),
-      result: self.result,
+      // result 落 SMALLINT（B.3 自治编号：approved=1/rejected=2/returned=3/completed=4），
+      // 领域模型仍用 Option<String> 承载（无 proto enum，自由语义串）。
+      result: self.result.map(activity_result_to_str),
       review_notes: self.review_notes,
       reviewed_by: self.reviewed_by.map(|id| id.to_string()),
       reviewed_at: self.reviewed_at,
@@ -154,9 +212,12 @@ struct OutboxRow {
   facility_id: uuid::Uuid,
   workflow_instance_id: uuid::Uuid,
   activity_instance_id: uuid::Uuid,
+  // activity_type 自由 VARCHAR（hetuflow_core::outbox_activity 常量串，D6 不动）。
   activity_type: String,
   payload: serde_json::Value,
-  status: String,
+  // workflow_activity_outbox.status 落 SMALLINT（B.3：pending=1/leased=2/succeeded=3/dead_letter=4）。
+  // 领域 OutboxRecord.status 仍用 String（worker 按串比对），into_model 翻译回串。
+  status: i16,
   attempt_count: i32,
   max_attempts: i32,
   next_attempt_at: chrono::DateTime<chrono::Utc>,
@@ -175,7 +236,7 @@ impl OutboxRow {
       activity_instance_id: self.activity_instance_id.to_string(),
       activity_type: self.activity_type,
       payload: self.payload,
-      status: self.status,
+      status: outbox_status_str(self.status),
       attempt_count: self.attempt_count,
       max_attempts: self.max_attempts,
       next_attempt_at: self.next_attempt_at,
@@ -193,8 +254,8 @@ struct TimerRow {
   facility_id: uuid::Uuid,
   workflow_instance_id: uuid::Uuid,
   activity_instance_id: uuid::Uuid,
-  /// Phase F2：'reminder' | 'escalation'，worker 据此路由不同 fire 处理
-  timer_kind: String,
+  /// Phase F2：reminder=1 / escalation=2 / timeout=3（B.3 SMALLINT），worker 据此路由不同 fire 处理。
+  timer_kind: i16,
 }
 
 impl TimerRow {
@@ -205,7 +266,7 @@ impl TimerRow {
       facility_id: self.facility_id.to_string(),
       workflow_instance_id: self.workflow_instance_id.to_string(),
       activity_instance_id: self.activity_instance_id.to_string(),
-      timer_kind: self.timer_kind,
+      timer_kind: timer_kind_str(self.timer_kind),
     }
   }
 }
@@ -272,7 +333,7 @@ pub trait WorkflowStore: Send + Sync {
   /// 读实例绑定的不可变 definition 快照（core serde）。
   async fn load_snapshot(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<DefinitionSnapshot>;
 
-  async fn complete_workflow_cas(&self, dbx: &DbxPostgres, id: uuid::Uuid, result: &str) -> Result<bool>;
+  async fn complete_workflow_cas(&self, dbx: &DbxPostgres, id: uuid::Uuid, result: i16) -> Result<bool>;
 
   async fn reactivate_workflow(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<bool>;
 
@@ -361,7 +422,7 @@ pub trait WorkflowStore: Send + Sync {
     &self,
     dbx: &DbxPostgres,
     activity_id: uuid::Uuid,
-    result: Option<&str>,
+    result: Option<i16>,
     reviewed_by: i64,
     review_notes: Option<&str>,
   ) -> Result<bool>;
@@ -543,8 +604,8 @@ impl WorkflowStore for PgWorkflowStore {
       .fetch_optional(
         sqlx::query_as::<_, InstanceRow>(&format!(
           "INSERT INTO workflow_instances (tenant_id, facility_id, reference_no, workflow_definition_id, business_key, business_type, status, side_effects_executed, context, definition_snapshot, definition_hash, started_at)
-           VALUES ($1, $2, $3, $4, $5, $6, 'active', false, $7, $8, $9, now())
-           ON CONFLICT (business_key, business_type) WHERE status IN ('pending', 'active') DO NOTHING
+           VALUES ($1, $2, $3, $4, $5, $6, 2, false, $7, $8, $9, now())
+           ON CONFLICT (business_key, business_type) WHERE status IN (1, 2) DO NOTHING
            RETURNING {INSTANCE_COLS}"
         ))
         .bind(tenant_id)
@@ -571,7 +632,7 @@ impl WorkflowStore for PgWorkflowStore {
     let row = dbx
       .fetch_optional(
         sqlx::query_as::<_, InstanceRow>(&format!(
-          "SELECT {INSTANCE_COLS} FROM workflow_instances WHERE business_key = $1 AND business_type = $2 AND status IN ('pending', 'active') LIMIT 1"
+          "SELECT {INSTANCE_COLS} FROM workflow_instances WHERE business_key = $1 AND business_type = $2 AND status IN (1, 2) LIMIT 1"
         ))
         .bind(business_key)
         .bind(business_type),
@@ -629,11 +690,11 @@ impl WorkflowStore for PgWorkflowStore {
     serde_json::from_value(row.0).map_err(|e| FlowError::Serialization(format!("definition_snapshot invalid: {e}")))
   }
 
-  async fn complete_workflow_cas(&self, dbx: &DbxPostgres, id: uuid::Uuid, result: &str) -> Result<bool> {
+  async fn complete_workflow_cas(&self, dbx: &DbxPostgres, id: uuid::Uuid, result: i16) -> Result<bool> {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_instances SET status = 'completed', result = $1, completed_at = now(), updated_at = now(), current_activity_id = NULL WHERE id = $2 AND status = 'active'",
+          "UPDATE workflow_instances SET status = 3, result = $1, completed_at = now(), updated_at = now(), current_activity_id = NULL WHERE id = $2 AND status = 2",
         )
         .bind(result)
         .bind(id),
@@ -647,7 +708,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_instances SET status = 'active', result = NULL, completed_at = NULL, updated_at = now() WHERE id = $1 AND status = 'completed' AND result = 'returned'",
+          "UPDATE workflow_instances SET status = 2, result = NULL, completed_at = NULL, updated_at = now() WHERE id = $1 AND status = 3 AND result = 3",
         )
         .bind(id),
       )
@@ -660,7 +721,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_instances SET status = 'errored', updated_at = now() WHERE id = $1 AND status = 'active'",
+          "UPDATE workflow_instances SET status = 4, updated_at = now() WHERE id = $1 AND status = 2",
         )
         .bind(id),
       )
@@ -689,7 +750,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_instances SET current_activity_id = $1, updated_at = now() WHERE id = $2 AND status = 'active'",
+          "UPDATE workflow_instances SET current_activity_id = $1, updated_at = now() WHERE id = $2 AND status = 2",
         )
         .bind(activity_id)
         .bind(instance_id),
@@ -708,7 +769,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_instances SET status = 'returned_waiting', current_activity_id = $2, updated_at = now() WHERE id = $1 AND status = 'active'",
+          "UPDATE workflow_instances SET status = 6, current_activity_id = $2, updated_at = now() WHERE id = $1 AND status = 2",
         )
         .bind(id)
         .bind(new_activity_id),
@@ -722,7 +783,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_instances SET status = 'active', updated_at = now() WHERE id = $1 AND status = 'returned_waiting'",
+          "UPDATE workflow_instances SET status = 2, updated_at = now() WHERE id = $1 AND status = 6",
         )
         .bind(id),
       )
@@ -780,13 +841,13 @@ impl WorkflowStore for PgWorkflowStore {
       .fetch_one(
         sqlx::query_as::<_, ActivityRow>(&format!(
           "INSERT INTO activity_instances (tenant_id, workflow_instance_id, activity_definition_id, activity_type, status, assignee_role, assignee_id, result, round)
-           VALUES ($1, $2, $3, $4, 'active', $5, NULL, NULL, $6)
+           VALUES ($1, $2, $3, $4, 2, $5, NULL, NULL, $6)
            RETURNING {ACTIVITY_COLS}"
         ))
         .bind(tenant_id)
         .bind(instance_id)
         .bind(node_id)
-        .bind(activity_type.as_str())
+        .bind(activity_type.as_i16())
         .bind(assignee_role)
         .bind(round),
       )
@@ -799,7 +860,7 @@ impl WorkflowStore for PgWorkflowStore {
     let row = dbx
       .fetch_optional(
         sqlx::query_as::<_, ActivityRow>(&format!(
-          "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1"
+          "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 AND status = 2 ORDER BY created_at DESC LIMIT 1"
         ))
         .bind(instance_id),
       )
@@ -812,7 +873,7 @@ impl WorkflowStore for PgWorkflowStore {
     let rows = dbx
       .fetch_all(
         sqlx::query_as::<_, ActivityRow>(&format!(
-          "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 AND status = 'active' ORDER BY created_at ASC"
+          "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 AND status = 2 ORDER BY created_at ASC"
         ))
         .bind(instance_id),
       )
@@ -838,8 +899,8 @@ impl WorkflowStore for PgWorkflowStore {
     let row: (i64,) = dbx
       .fetch_one(
         sqlx::query_as(
-          "SELECT COUNT(*) FROM activity_instances WHERE workflow_instance_id = $1 AND status = 'completed' \
-           AND (result IS NULL OR result NOT IN ('rejected', 'returned')) \
+          "SELECT COUNT(*) FROM activity_instances WHERE workflow_instance_id = $1 AND status = 3 \
+           AND (result IS NULL OR result NOT IN (2, 3)) \
            AND round = $2 AND activity_definition_id = ANY($3)",
         )
         .bind(instance_id)
@@ -906,14 +967,14 @@ impl WorkflowStore for PgWorkflowStore {
     &self,
     dbx: &DbxPostgres,
     activity_id: uuid::Uuid,
-    result: Option<&str>,
+    result: Option<i16>,
     reviewed_by: i64,
     review_notes: Option<&str>,
   ) -> Result<bool> {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE activity_instances SET status = 'completed', result = $1, reviewed_by = $2, reviewed_at = now(), review_notes = $3, updated_at = now() WHERE id = $4 AND status = 'active'",
+          "UPDATE activity_instances SET status = 3, result = $1, reviewed_by = $2, reviewed_at = now(), review_notes = $3, updated_at = now() WHERE id = $4 AND status = 2",
         )
         .bind(result)
         .bind(reviewed_by)
@@ -929,7 +990,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE activity_instances SET status = 'skipped', updated_at = now() WHERE id = $1 AND status = 'active'",
+          "UPDATE activity_instances SET status = 4, updated_at = now() WHERE id = $1 AND status = 2",
         )
         .bind(activity_id),
       )
@@ -948,7 +1009,7 @@ impl WorkflowStore for PgWorkflowStore {
     dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_timers SET status = 'cancelled' WHERE workflow_instance_id = $1 AND activity_instance_id IN (SELECT id FROM activity_instances WHERE workflow_instance_id = $1 AND status = 'active' AND id != $2) AND status = 'pending'",
+          "UPDATE workflow_timers SET status = 3 WHERE workflow_instance_id = $1 AND activity_instance_id IN (SELECT id FROM activity_instances WHERE workflow_instance_id = $1 AND status = 2 AND id != $2) AND status = 1",
         )
         .bind(instance_id)
         .bind(exclude_activity_id),
@@ -958,7 +1019,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE activity_instances SET status = 'skipped', updated_at = now() WHERE workflow_instance_id = $1 AND id != $2 AND status = 'active'",
+          "UPDATE activity_instances SET status = 4, updated_at = now() WHERE workflow_instance_id = $1 AND id != $2 AND status = 2",
         )
         .bind(instance_id)
         .bind(exclude_activity_id),
@@ -1032,7 +1093,7 @@ impl WorkflowStore for PgWorkflowStore {
     let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT id FROM workflow_instances WHERE true");
     push_scope(&mut qb, scope)?;
     if terminal_only {
-      qb.push(" AND status IN ('completed', 'errored', 'cancelled')");
+      qb.push(" AND status IN (3, 4, 5)");
     }
     qb.push(" ORDER BY created_at DESC LIMIT ");
     qb.push_bind(limit);
@@ -1100,7 +1161,7 @@ impl WorkflowStore for PgWorkflowStore {
       .execute(
         sqlx::query(
           "INSERT INTO workflow_activity_outbox (tenant_id, facility_id, workflow_instance_id, activity_instance_id, activity_type, payload, status, next_attempt_at)
-           VALUES ($1, $2, $3, $4, $5, $6, 'pending', now())
+           VALUES ($1, $2, $3, $4, $5, $6, 1, now())
            ON CONFLICT DO NOTHING",
         )
         .bind(tenant_id)
@@ -1126,11 +1187,11 @@ impl WorkflowStore for PgWorkflowStore {
       .fetch_all(
         sqlx::query_as::<_, OutboxRow>(&format!(
           "UPDATE workflow_activity_outbox
-           SET status = 'leased', lease_owner = $1, lease_expires_at = now() + $2 * interval '1 second', updated_at = now()
+           SET status = 2, lease_owner = $1, lease_expires_at = now() + $2 * interval '1 second', updated_at = now()
            WHERE id IN (
              SELECT id FROM workflow_activity_outbox
              WHERE next_attempt_at <= now()
-               AND (status = 'pending' OR (status = 'leased' AND lease_expires_at < now()))
+               AND (status = 1 OR (status = 2 AND lease_expires_at < now()))
              ORDER BY next_attempt_at
              FOR UPDATE SKIP LOCKED
              LIMIT $3
@@ -1150,8 +1211,8 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_activity_outbox SET status = 'succeeded', lease_owner = NULL, lease_expires_at = NULL, last_error = NULL, updated_at = now()
-           WHERE id = $1 AND lease_owner = $2 AND status = 'leased'",
+          "UPDATE workflow_activity_outbox SET status = 3, lease_owner = NULL, lease_expires_at = NULL, last_error = NULL, updated_at = now()
+           WHERE id = $1 AND lease_owner = $2 AND status = 2",
         )
         .bind(id)
         .bind(worker_id),
@@ -1172,8 +1233,8 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_activity_outbox SET status = 'pending', attempt_count = attempt_count + 1, lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = now() + $3 * interval '1 second', last_error = $4, updated_at = now()
-           WHERE id = $1 AND lease_owner = $2 AND status = 'leased'",
+          "UPDATE workflow_activity_outbox SET status = 1, attempt_count = attempt_count + 1, lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = now() + $3 * interval '1 second', last_error = $4, updated_at = now()
+           WHERE id = $1 AND lease_owner = $2 AND status = 2",
         )
         .bind(id)
         .bind(worker_id)
@@ -1195,8 +1256,8 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_activity_outbox SET status = 'dead_letter', attempt_count = attempt_count + 1, lease_owner = NULL, lease_expires_at = NULL, last_error = $3, updated_at = now()
-           WHERE id = $1 AND lease_owner = $2 AND status = 'leased'",
+          "UPDATE workflow_activity_outbox SET status = 4, attempt_count = attempt_count + 1, lease_owner = NULL, lease_expires_at = NULL, last_error = $3, updated_at = now()
+           WHERE id = $1 AND lease_owner = $2 AND status = 2",
         )
         .bind(id)
         .bind(worker_id)
@@ -1238,14 +1299,14 @@ impl WorkflowStore for PgWorkflowStore {
       .execute(
         sqlx::query(
           "INSERT INTO workflow_timers (tenant_id, facility_id, workflow_instance_id, activity_instance_id, timer_kind, fire_at, status)
-           VALUES ($1, $2, $3, $4, $5, now() + $6 * interval '1 second', 'pending')
-           ON CONFLICT (workflow_instance_id, activity_instance_id, timer_kind) WHERE status = 'pending' DO NOTHING",
+           VALUES ($1, $2, $3, $4, $5, now() + $6 * interval '1 second', 1)
+           ON CONFLICT (workflow_instance_id, activity_instance_id, timer_kind) WHERE status = 1 DO NOTHING",
         )
         .bind(tenant_id)
         .bind(facility_id)
         .bind(instance_id)
         .bind(activity_id)
-        .bind(timer_kind)
+        .bind(timer_kind_i16(timer_kind))
         .bind(fire_in_seconds),
       )
       .await
@@ -1257,7 +1318,7 @@ impl WorkflowStore for PgWorkflowStore {
     dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_timers SET status = 'cancelled' WHERE activity_instance_id = $1 AND status = 'pending'",
+          "UPDATE workflow_timers SET status = 3 WHERE activity_instance_id = $1 AND status = 1",
         )
         .bind(activity_id),
       )
@@ -1272,7 +1333,7 @@ impl WorkflowStore for PgWorkflowStore {
         sqlx::query_as::<_, TimerRow>(
           "SELECT id, tenant_id, facility_id, workflow_instance_id, activity_instance_id, timer_kind
            FROM workflow_timers
-           WHERE status = 'pending' AND fire_at <= now()
+           WHERE status = 1 AND fire_at <= now()
            ORDER BY fire_at
            FOR UPDATE SKIP LOCKED
            LIMIT $1",
@@ -1293,7 +1354,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE activity_instances SET assignee_role = $1, updated_at = now() WHERE id = $2 AND status = 'active'",
+          "UPDATE activity_instances SET assignee_role = $1, updated_at = now() WHERE id = $2 AND status = 2",
         )
         .bind(new_role)
         .bind(activity_id),
@@ -1312,7 +1373,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE activity_instances SET assignee_id = $1, updated_at = now() WHERE id = $2 AND status = 'active'",
+          "UPDATE activity_instances SET assignee_id = $1, updated_at = now() WHERE id = $2 AND status = 2",
         )
         .bind(assignee_id)
         .bind(activity_id),
@@ -1326,7 +1387,7 @@ impl WorkflowStore for PgWorkflowStore {
     let n = dbx
       .execute(
         sqlx::query(
-          "UPDATE workflow_timers SET status = 'fired', fired_at = now() WHERE id = $1 AND status = 'pending'",
+          "UPDATE workflow_timers SET status = 2, fired_at = now() WHERE id = $1 AND status = 1",
         )
         .bind(id),
       )

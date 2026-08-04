@@ -98,10 +98,11 @@ impl EventConsumer for PostgresEventQueueProvider {
     let mut tx = self.pool.begin().await.map_err(|e| MqError::ClaimFailed(e.to_string()))?;
 
     // 1. SELECT FOR UPDATE SKIP LOCKED —— 锁定批量待领事件
+    // event_queue.status 落 SMALLINT（形态 C：pending=1/processing=2/completed=3/failed=4）。
     let select_sql = format!(
       "SELECT id, event_type, payload, retry_count, max_retries, created_at \
        FROM {} \
-       WHERE target_service = $1 AND status = 'pending' AND retry_count < max_retries \
+       WHERE target_service = $1 AND status = 1 AND retry_count < max_retries \
        ORDER BY created_at \
        FOR UPDATE SKIP LOCKED LIMIT $2",
       self.table_name
@@ -118,10 +119,10 @@ impl EventConsumer for PostgresEventQueueProvider {
       return Ok(vec![]);
     }
 
-    // 2. UPDATE 同一事务内置 processing
+    // 2. UPDATE 同一事务内置 processing=2
     let ids: Vec<Uuid> = rows.iter().map(|r| r.get::<Uuid, _>("id")).collect();
     let update_sql =
-      format!("UPDATE {} SET status = 'processing', updated_at = now() WHERE id = ANY($1)", self.table_name);
+      format!("UPDATE {} SET status = 2, updated_at = now() WHERE id = ANY($1)", self.table_name);
     sqlx::query(&update_sql)
       .bind(&ids)
       .execute(&mut *tx)
@@ -146,7 +147,7 @@ impl EventConsumer for PostgresEventQueueProvider {
 
   async fn mark_processed(&self, event_id: EventId) -> Result<(), MqError> {
     let sql = format!(
-      "UPDATE {} SET status = 'completed', processed_at = now(), updated_at = now() WHERE id = $1",
+      "UPDATE {} SET status = 3, processed_at = now(), updated_at = now() WHERE id = $1",
       self.table_name
     );
     let res = sqlx::query(&sql)
@@ -161,15 +162,16 @@ impl EventConsumer for PostgresEventQueueProvider {
   }
 
   async fn mark_failed(&self, event_id: EventId, error: &str, decision: RetryDecision) -> Result<(), MqError> {
-    let next_status = match decision {
-      RetryDecision::Retry => "pending",
-      RetryDecision::Dead => "failed",
+    // next_status 落 SMALLINT：pending=1 / failed=4。
+    let next_status: i16 = match decision {
+      RetryDecision::Retry => 1,
+      RetryDecision::Dead => 4,
     };
-    // 兜底：即使 caller 给 Retry，若本次 +1 后已耗尽重试次数，强制置 'failed'，
-    // 防止失败事件无限回 'pending' 重投。仅在重试未耗尽时才用 caller 给的状态。
+    // 兜底：即使 caller 给 Retry，若本次 +1 后已耗尽重试次数，强制置 failed=4，
+    // 防止失败事件无限回 pending 重投。仅在重试未耗尽时才用 caller 给的状态。
     let sql = format!(
       "UPDATE {} \
-       SET status = CASE WHEN retry_count + 1 >= max_retries THEN 'failed' ELSE $2 END, \
+       SET status = CASE WHEN retry_count + 1 >= max_retries THEN 4 ELSE $2 END, \
            error_message = $3, retry_count = retry_count + 1, updated_at = now() \
        WHERE id = $1",
       self.table_name
@@ -189,14 +191,14 @@ impl EventConsumer for PostgresEventQueueProvider {
 
   async fn reap_zombie(&self, target_service: &str, stuck_after: Duration) -> Result<u64, MqError> {
     let interval_secs = stuck_after.as_secs() as i32;
-    // 已耗尽重试的 zombie 直接判 'failed'，否则回 'pending' 等待重领。
+    // 已耗尽重试的 zombie 直接判 failed=4，否则回 pending=1 等待重领。
     // 防止耗尽重试的事件被反复 reap → 重领 → 再卡死。
     let sql = format!(
       "UPDATE {} \
-       SET status = CASE WHEN retry_count >= max_retries THEN 'failed' ELSE 'pending' END, \
+       SET status = CASE WHEN retry_count >= max_retries THEN 4 ELSE 1 END, \
            updated_at = now() \
        WHERE target_service = $1 \
-         AND status = 'processing' \
+         AND status = 2 \
          AND updated_at < now() - make_interval(secs => $2)",
       self.table_name
     );
