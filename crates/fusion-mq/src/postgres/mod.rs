@@ -121,8 +121,7 @@ impl EventConsumer for PostgresEventQueueProvider {
 
     // 2. UPDATE 同一事务内置 processing=2
     let ids: Vec<Uuid> = rows.iter().map(|r| r.get::<Uuid, _>("id")).collect();
-    let update_sql =
-      format!("UPDATE {} SET status = 2, updated_at = now() WHERE id = ANY($1)", self.table_name);
+    let update_sql = format!("UPDATE {} SET status = 2, updated_at = now() WHERE id = ANY($1)", self.table_name);
     sqlx::query(&update_sql)
       .bind(&ids)
       .execute(&mut *tx)
@@ -146,10 +145,8 @@ impl EventConsumer for PostgresEventQueueProvider {
   }
 
   async fn mark_processed(&self, event_id: EventId) -> Result<(), MqError> {
-    let sql = format!(
-      "UPDATE {} SET status = 3, processed_at = now(), updated_at = now() WHERE id = $1",
-      self.table_name
-    );
+    let sql =
+      format!("UPDATE {} SET status = 3, processed_at = now(), updated_at = now() WHERE id = $1", self.table_name);
     let res = sqlx::query(&sql)
       .bind(event_id.0)
       .execute(&self.pool)

@@ -720,10 +720,8 @@ impl WorkflowStore for PgWorkflowStore {
   async fn error_workflow(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<bool> {
     let n = dbx
       .execute(
-        sqlx::query(
-          "UPDATE workflow_instances SET status = 4, updated_at = now() WHERE id = $1 AND status = 2",
-        )
-        .bind(id),
+        sqlx::query("UPDATE workflow_instances SET status = 4, updated_at = now() WHERE id = $1 AND status = 2")
+          .bind(id),
       )
       .await
       .map_err(map_db)?;
@@ -782,10 +780,8 @@ impl WorkflowStore for PgWorkflowStore {
   async fn resume_from_returned_waiting(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<bool> {
     let n = dbx
       .execute(
-        sqlx::query(
-          "UPDATE workflow_instances SET status = 2, updated_at = now() WHERE id = $1 AND status = 6",
-        )
-        .bind(id),
+        sqlx::query("UPDATE workflow_instances SET status = 2, updated_at = now() WHERE id = $1 AND status = 6")
+          .bind(id),
       )
       .await
       .map_err(map_db)?;
@@ -989,10 +985,8 @@ impl WorkflowStore for PgWorkflowStore {
   async fn skip_activity_for_timeout(&self, dbx: &DbxPostgres, activity_id: uuid::Uuid) -> Result<bool> {
     let n = dbx
       .execute(
-        sqlx::query(
-          "UPDATE activity_instances SET status = 4, updated_at = now() WHERE id = $1 AND status = 2",
-        )
-        .bind(activity_id),
+        sqlx::query("UPDATE activity_instances SET status = 4, updated_at = now() WHERE id = $1 AND status = 2")
+          .bind(activity_id),
       )
       .await
       .map_err(map_db)?;
@@ -1317,10 +1311,8 @@ impl WorkflowStore for PgWorkflowStore {
   async fn cancel_timers_for_activity(&self, dbx: &DbxPostgres, activity_id: uuid::Uuid) -> Result<()> {
     dbx
       .execute(
-        sqlx::query(
-          "UPDATE workflow_timers SET status = 3 WHERE activity_instance_id = $1 AND status = 1",
-        )
-        .bind(activity_id),
+        sqlx::query("UPDATE workflow_timers SET status = 3 WHERE activity_instance_id = $1 AND status = 1")
+          .bind(activity_id),
       )
       .await
       .map_err(map_db)?;
@@ -1372,11 +1364,9 @@ impl WorkflowStore for PgWorkflowStore {
   ) -> Result<bool> {
     let n = dbx
       .execute(
-        sqlx::query(
-          "UPDATE activity_instances SET assignee_id = $1, updated_at = now() WHERE id = $2 AND status = 2",
-        )
-        .bind(assignee_id)
-        .bind(activity_id),
+        sqlx::query("UPDATE activity_instances SET assignee_id = $1, updated_at = now() WHERE id = $2 AND status = 2")
+          .bind(assignee_id)
+          .bind(activity_id),
       )
       .await
       .map_err(map_db)?;
@@ -1386,10 +1376,7 @@ impl WorkflowStore for PgWorkflowStore {
   async fn mark_timer_fired(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<bool> {
     let n = dbx
       .execute(
-        sqlx::query(
-          "UPDATE workflow_timers SET status = 2, fired_at = now() WHERE id = $1 AND status = 1",
-        )
-        .bind(id),
+        sqlx::query("UPDATE workflow_timers SET status = 2, fired_at = now() WHERE id = $1 AND status = 1").bind(id),
       )
       .await
       .map_err(map_db)?;
