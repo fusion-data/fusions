@@ -129,7 +129,7 @@ mod tests {
       trigger_value: "facility",
       require_header: "x-facility-id",
       exclude_paths: &["/health", "/config", "/version"],
-      exclude_rpcs: &[("hylx.auth.v1.AuthService", "Login"), ("hylx.auth.v1.AuthService", "SetActiveContext")],
+      exclude_rpcs: &[("myapp.auth.v1.AuthService", "Login"), ("myapp.auth.v1.AuthService", "SetActiveContext")],
       reject_status: 403,
       error_code: "permission_denied",
       error_message: "facility context mismatch",
@@ -149,7 +149,7 @@ mod tests {
     let config = test_config();
     let mut authorizer = ContextValidationAuthorizer { config };
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
+      "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("x-context-type", "facility"), ("x-facility-id", "facility-123")],
     );
     let result = authorizer.authorize(req).await;
@@ -160,7 +160,7 @@ mod tests {
   async fn test_triggered_without_required_header_rejects() {
     let config = test_config();
     let mut authorizer = ContextValidationAuthorizer { config };
-    let req = make_request("/hylx.resident.v1.ResidentService/ListResidents", vec![("x-context-type", "facility")]);
+    let req = make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("x-context-type", "facility")]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
     let response = result.unwrap_err();
@@ -171,7 +171,7 @@ mod tests {
   async fn test_non_trigger_context_passes() {
     let config = test_config();
     let mut authorizer = ContextValidationAuthorizer { config };
-    let req = make_request("/hylx.resident.v1.ResidentService/ListResidents", vec![("x-context-type", "personal")]);
+    let req = make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("x-context-type", "personal")]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
   }
@@ -180,7 +180,7 @@ mod tests {
   async fn test_missing_context_header_passes() {
     let config = test_config();
     let mut authorizer = ContextValidationAuthorizer { config };
-    let req = make_request("/hylx.resident.v1.ResidentService/ListResidents", vec![]);
+    let req = make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
   }
@@ -198,7 +198,7 @@ mod tests {
   async fn test_exempt_rpc_passes() {
     let config = test_config();
     let mut authorizer = ContextValidationAuthorizer { config };
-    let req = make_request("/hylx.auth.v1.AuthService/SetActiveContext", vec![("x-context-type", "facility")]);
+    let req = make_request("/myapp.auth.v1.AuthService/SetActiveContext", vec![("x-context-type", "facility")]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
   }
@@ -208,7 +208,7 @@ mod tests {
     let config = test_config();
     let mut authorizer = ContextValidationAuthorizer { config };
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
+      "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("x-context-type", "facility"), ("x-facility-id", "")],
     );
     let result = authorizer.authorize(req).await;
@@ -224,7 +224,7 @@ mod tests {
     config.error_code = "unauthorized";
     config.error_message = "missing tenant context";
     let mut authorizer = ContextValidationAuthorizer { config };
-    let req = make_request("/hylx.resident.v1.ResidentService/ListResidents", vec![("x-context-type", "facility")]);
+    let req = make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("x-context-type", "facility")]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
     let response = result.unwrap_err();

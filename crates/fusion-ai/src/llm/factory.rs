@@ -1,6 +1,6 @@
 //! [`LlmChatProvider`] factory —— 按 [`LlmProviderConfig`] enum 派发到具体 impl。
 //!
-//! caller（hylx-voice ai_route）构造 `LlmProviderConfig::Qwen { api_key, ... }`
+//! caller（上层 ai_route）构造 `LlmProviderConfig::Qwen { api_key, ... }`
 //! 后调 [`build_provider`] 得 `Arc<dyn LlmChatProvider>`，业务层不直接知道哪家 vendor。
 
 use std::sync::Arc;
@@ -17,10 +17,10 @@ use super::providers::{
 use super::{LlmChatProvider, LlmError, LlmProviderId, SharedLlmChatProvider};
 use crate::providers::dashscope::DashScopeRegion;
 
-/// Provider 配置 enum —— hylx-voice ai_route 层从 `provider_credentials.config_json`
+/// Provider 配置 enum —— 上层 ai_route 层从 `provider_credentials.config_json`
 /// 解出 vendor 字段后填进对应 variant。
 ///
-/// 注意：`api_key` 类字段全部是 plaintext（在 hylx-access 进程内解密后跨 internal
+/// 注意：`api_key` 类字段全部是 plaintext（在消费方进程内解密后跨 internal
 /// RPC 传回，不落盘）。该 enum **不要**实现 `Debug` —— 避免 `tracing::info!`
 /// 误打到日志（`#[derive(Debug)]` 已显式不加）。
 #[non_exhaustive]

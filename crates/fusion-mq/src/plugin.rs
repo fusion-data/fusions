@@ -20,7 +20,7 @@ use fusion_core::{application::ApplicationBuilder, configuration::ConfigRegistry
 ///
 /// // 2. 业务处理器中取用：
 /// let producer = Application::global().component::<EventProducerHandle>();
-/// producer.publish(PublishEvent::new("sms.send", "hylx-identity", "hylx-infra", payload)).await?;
+/// producer.publish(PublishEvent::new("sms.send", "identity-svc", "infra-svc", payload)).await?;
 /// ```
 pub struct MessageQueuePlugin;
 

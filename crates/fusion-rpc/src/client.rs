@@ -30,7 +30,7 @@ use connectrpc::client::{Http2Connection, SharedHttp2Connection};
 use http::Uri;
 use hyper_util::client::legacy::connect::HttpConnector;
 
-/// 东西向 ConnectRPC transport 别名（与旧 `hylx_core` 别名保持一致）。
+/// 东西向 ConnectRPC transport 别名（与消费方应用层 crate 历史别名保持一致）。
 /// `*ServiceClient<ConnectTransport>` 是统一签名。
 pub type ConnectTransport = SharedHttp2Connection;
 
@@ -88,7 +88,7 @@ fn make_connector(cfg: &TransportConfig) -> HttpConnector {
   c
 }
 
-/// 用默认自愈配置构造 transport。drop-in 替换旧 `hylx_core::build_connect_transport`。
+/// 用默认自愈配置构造 transport。drop-in 替换消费方应用层历史的 `build_connect_transport`。
 ///
 /// MUST 在 tokio runtime 上下文中调用（`.shared()` 内部 `tokio::spawn(worker)`）。
 /// 所有 bin 入口都是 `#[tokio::main]` async fn，在 `builder.run().await` 之后

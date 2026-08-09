@@ -304,7 +304,7 @@ mod tests {
   fn build_send_sms_request() -> Request<Bytes> {
     Request::builder()
       .method("POST")
-      .uri("https://dysmsapi.aliyuncs.com/?PhoneNumbers=13800138000&SignName=Hylx&TemplateCode=SMS_001")
+      .uri("https://dysmsapi.aliyuncs.com/?PhoneNumbers=13800138000&SignName=TestSign&TemplateCode=SMS_001")
       .header("x-acs-action", "SendSms")
       .header("x-acs-version", "2017-05-25")
       .body(Bytes::new())

@@ -3,7 +3,7 @@
 //! 持有独立 `sqlx::PgPool`，不通过 `fusion-db` 的 `ModelManager` —— 见 crate 顶层 doc。
 //!
 //! `event_queue` 表 schema 见 [`schema`] 模块文档；实际 DDL 由部署脚本灌入
-//! `hylx_mq` 数据库。
+//! 消费方消息队列数据库。
 
 use crate::{
   ClaimedEvent, EventConsumer, EventId, EventProducer, MqError, PublishEvent, RetryDecision, config::PostgresMqConfig,

@@ -4,7 +4,7 @@
 //! These tests are the pure half of acceptance "projection is rebuildable from the event log":
 //! they pin the payload **shape** without a database. The other half — that the live projection
 //! rows actually match the rebuild — needs real Postgres and lives in the consuming application's
-//! API tests (`tests/suites/careos-workflow.test.ts` in hylxos).
+//! API tests (`tests/suites/<consumer>-workflow.test.ts` in the consumer repo).
 //!
 //! If a payload key here drifts from `service.rs`, this test keeps passing while production
 //! rebuild silently degrades — so every event constructed below mirrors a literal `json!` in

@@ -1,4 +1,4 @@
-//! `event_queue` 表 schema 元数据（仅文档；实际 DDL 由部署脚本灌入 `hylx_mq`）。
+//! `event_queue` 表 schema 元数据（仅文档；实际 DDL 由部署脚本灌入消费方消息队列数据库）。
 //!
 //! ```sql
 //! CREATE TABLE IF NOT EXISTS event_queue (
@@ -28,8 +28,8 @@
 //!
 //! ## 与历史 schema 的差异
 //!
-//! 老 `hylx_careos.event_queue`（contracts/schemas/schema.sql 2245-2262 行）
-//! **缺 `updated_at` 列**，但 `hylx-careos` TaskEventConsumer 的 zombie reaper
+//! 老应用历史 schema（contracts/schemas/schema.sql 2245-2262 行）的 `event_queue`
+//! **缺 `updated_at` 列**，但老消费方 `TaskEventConsumer` 的 zombie reaper
 //! SQL 仍引用 `updated_at` —— 历史 bug，新 schema 修补。
 
 /// 默认表名。

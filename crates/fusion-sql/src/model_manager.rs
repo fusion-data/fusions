@@ -114,7 +114,7 @@ where
   /// 此方法**不会**调用 `SET LOCAL app.tenant_id = ...` 之类 session vars 注入；
   /// 它只是 `BEGIN; ...; COMMIT;` 的封装。如果你的应用依赖 PostgreSQL Row Level
   /// Security（FORCE ROW LEVEL SECURITY 表 + `app.*` GUC 谓词），必须使用配套
-  /// 的应用层 helper（如 hylx-careos 项目的 `hylx_core::db::with_read_txn` /
+  /// 的应用层 helper（如消费方项目的 `<app>::db::with_read_txn` /
   /// `with_write_txn`），它们在 `transaction` 之上叠加 `set_config(...)`。
   /// 直接调用此方法跑 RLS 表 SQL 会按 fallback policy 处理 → 跨租户读放大风险。
   ///

@@ -167,7 +167,7 @@ pub struct AiUsageCtx {
   pub resolved_region: Option<String>,
 }
 
-/// 一条模型计量事件 —— 落 `ai_model_usage_events`（hylx_ai 库）。
+/// 一条模型计量事件 —— 落 `ai_model_usage_events`（消费方业务库）。
 ///
 /// `occurred_at` 由事件携带（捕获时戳），token 用 `i64`（bind BIGINT，`u32 → i64` 无损上转）。
 ///
@@ -272,7 +272,7 @@ impl AiUsageEvent {
   }
 }
 
-/// 持久化缝 —— impl 在 hylx-ai infra（`PgUsageSink`），共享层只定 trait（backend-layering）。
+/// 持久化缝 —— impl 在消费方 AI infra（如 `PgUsageSink`），共享层只定 trait（backend-layering）。
 ///
 /// `record` MUST 非阻塞 enqueue，**绝不**向 caller propagate 写错误（计量失败不能拖垮业务）。
 pub trait AiUsageSink: Send + Sync {

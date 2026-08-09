@@ -121,7 +121,7 @@ mod tests {
 
   /// [`add_environment`] 的 env-override 契约：`Environment::default().separator("__")` 把 env 名
   /// 小写、`__` 拆 nested 层、段内单 `_` 保留。支撑 API 测试用
-  /// `HYLX__IDENTITY__AUTH__OAUTH_FEISHU_API_BASE` 覆盖 `hylx.identity.auth.oauth_feishu_api_base`
+  /// `MYAPP__IDENTITY__AUTH__OAUTH_FEISHU_API_BASE` 覆盖 `myapp.identity.auth.oauth_feishu_api_base`
   /// （mock provider 注入），无需改 gitignored app.toml。
   #[test]
   fn add_environment_double_underscore_nests_and_single_underscore_kept() {

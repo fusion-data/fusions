@@ -4,7 +4,7 @@
 //! （body shape / tool_use 协议差异），需要专用 wire 层。本期 trait + factory
 //! 已展示在前端 `ListProviders` 中，租户配置后切换路由到 anthropic 会在
 //! [`LlmChatProvider::chat_complete`] 返回 [`LlmError::ProviderNotEnabled`]，
-//! hylx-voice ws handshake 阶段就拒绝并报错给前端。
+//! 上层 ws handshake 阶段就拒绝并报错给前端。
 //!
 //! 实装触发条件（与 fusion-ai/llm 设计文档对齐）：
 //! 1. 至少 1 家试点客户明确要求 Anthropic Claude

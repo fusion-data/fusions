@@ -63,6 +63,34 @@
 | 属性解析诊断 | proc-macro 属性解析失败 MUST 经 `syn::Error → to_compile_error()` 发正常编译诊断；MUST NOT `unwrap()` panic（报 "proc-macro panicked" 无 span 难定位） |
 | protected 命名 | trait 方法前导下划线（如 `DbBmc::_bmc_config`）= protected 约定：实现方提供、仅供框架函数读取，业务代码 MUST NOT 直接调用 |
 
+## 7. 框架业务无关（消费方标识符零泄漏）
+
+> 术语：**fusions** = 本仓所有 crate；**消费方 (consumer)** = 任何依赖 fusions 的应用 crate / bin / 项目；**消费方标识符** = 产品名 / 服务名 / proto 包名 / cookie 名 / 库名 / 表名 / 环境变量前缀 / 角色码 / 错误码前缀 / metric 名 / 默认配置值等专属于某消费方的名称。文档归仓边界见 [../README.md](../README.md#文档边界)。
+
+fusions 是业务无关的 lib / framework，同时服务多个消费方（如 hetuos、hetu-creative）。框架代码 MUST NOT 硬编码、MUST NOT 在默认值里固化任何消费方标识符。
+
+**Apply（新增 / 修改 fusions 代码时逐条核对）**：
+
+| 载体 | MUST |
+|---|---|
+| 标识符 | 类型 / 函数 / 模块 / crate 名 MUST 用框架中立词；消费方专有名只出现在消费方传给框架的配置（如 `AuthConfig`、`ContextValidationConfig`）里 |
+| 默认值 | `Configurable` 默认配置、`*Config::DEFAULT`、`default.toml`、`DEFAULT_*` 常量 MUST 取框架中立值；消费方特化（如 cookie 名、RPC 包名）由消费方构造时覆盖 |
+| 日志 / metric | 框架发出的 `log::*` / `tracing::*` 文本与 metric 名 MUST 用 `fusion_*` / crate 自有前缀；消费方身份由 OTLP resource / Loki service label 等**可观测性管道**区分，不塞进 per-request config |
+| 测试 fixture | `#[cfg(test)]` 的示例 RPC 路径 / cookie 名 / service 名 MUST 用中立占位（`myapp.*.v1.*Service` / `access_token`）；示例 DB 连接串用 `postgres://user:password@host/db` |
+| 注释 / doc | `///` / `//!` / README / 示例 MUST NOT 出现任何消费方的真实产品名 / 服务名 / 库名；指代消费方时用「消费方 (consumer)」统称，举例用 `<consumer>` / `<app>` 占位 |
+
+**MUST NOT**：
+- 在框架代码路径（含 `debug_assert!` 消息、`panic!` 消息、`#[error(...)]` 文本）写入消费方 crate 路径（如 `<consumer>_core::db::...`）或消费方产品名
+- 把消费方 proto 包名 / cookie 名 / DB 实例名写进框架默认配置或文档示例
+- 用「某一消费方的现状」作为框架默认值（「因为 hetuos 现在是 X，所以默认 X」→ ❌）
+
+**冲突 / Stop**：当一条框架默认值与某消费方约定一致时，MUST 验证它对**其他消费方也中立**后才保留；只对一个消费方合理 → MUST 改为该消费方传参，框架默认取通用值。
+
+**验证锚点**：
+- `grep -rniE 'hetuos|hetu-creative|hylx|careos' --include='*.rs' --include='*.toml' --include='*.md' .` → MUST 零命中（`hylx` / `careos` 是历史消费方名，已于 2026-08 清除）
+- `crates/fusion-rpc/src/auth_middleware.rs::test_default_cookie_token_name_is_business_agnostic` —— 守护 `AuthConfig::DEFAULT.cookie_token_name = "access_token"`（框架默认中立）
+- 同文件 L200/L207 的 `metric=fusion_rpc.auth.*` —— 框架日志 metric 前缀中立范例
+
 ## 易错点速查
 
 | 症状 | 根因 → 条款 |

@@ -14,7 +14,7 @@
 //! `fusion-mq` 不依赖 [`fusion_db`](https://docs.rs/fusion-db) —— Postgres provider
 //! 内部独立持 `sqlx::PgPool`，不通过 `ModelManager`。原因：
 //! 1. `event_queue` 表本身无 tenant_id / RLS，不需要 `SET LOCAL` GUC 链路
-//! 2. 解耦后未来可指向独立的 `hylx_mq` 数据库实例（拆库阶段 1 目标）
+//! 2. 解耦后未来可指向独立的消息队列数据库实例（拆库阶段 1 目标）
 //! 3. trait 抽象层允许未来切换非-SQL provider 而无需触碰 fusion-db
 
 pub mod config;

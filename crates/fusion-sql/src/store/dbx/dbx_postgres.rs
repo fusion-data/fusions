@@ -150,7 +150,7 @@ impl DbxPostgres {
     debug_assert!(
       self.txn || self.session_vars.is_empty(),
       "DbxPostgres: session_vars set but txn=false → SET LOCAL won't apply, RLS GUC will be empty (RLS-bypass risk). \
-       Wrap the call in `hylx_core::db::with_read_txn` / `with_write_txn` (or equivalent)."
+       Wrap the call in your application's `with_read_txn` / `with_write_txn` helper (e.g. `<app>::db::with_read_txn`)."
     );
   }
 

@@ -3,7 +3,7 @@
 //! 默认跳过 —— 设置 `FUSION_MQ_TEST_URL=postgres://...` 后运行：
 //!
 //! ```bash
-//! FUSION_MQ_TEST_URL=postgres://hylx:hylx_dev@localhost:55432/hylx_careos \
+//! FUSION_MQ_TEST_URL=postgres://user:password@localhost:55432/myapp_db \
 //!   cargo test -p fusion-mq --test postgres -- --nocapture
 //! ```
 //!

@@ -34,10 +34,10 @@ pub fn parse_uuid(s: &str) -> Result<uuid::Uuid, ConnectError> {
 }
 
 /// Parse ConnectRPC path into (service, method) parts.
-/// e.g., "/hylx.auth.v1.AuthService/Login" → ("hylx.auth.v1.AuthService", "Login")
+/// e.g., "/myapp.auth.v1.AuthService/Login" → ("myapp.auth.v1.AuthService", "Login")
 ///
 /// 返回 borrow 而非 owned String：所有 caller（auth_middleware /
-/// context_validation_middleware / hylx-core middleware）拿到后立即比较 +
+/// context_validation_middleware / 消费方应用层 middleware）拿到后立即比较 +
 /// 立即丢弃，借用就够，无需为 hot path 每请求分配 2 个 String。
 pub fn parse_rpc_path(path: &str) -> Option<(&str, &str)> {
   let path = path.trim_start_matches('/');
@@ -119,7 +119,7 @@ mod tests {
 
   #[test]
   fn parse_rpc_path_splits_service_and_method() {
-    assert_eq!(parse_rpc_path("/hylx.auth.v1.AuthService/Login"), Some(("hylx.auth.v1.AuthService", "Login")));
+    assert_eq!(parse_rpc_path("/myapp.auth.v1.AuthService/Login"), Some(("myapp.auth.v1.AuthService", "Login")));
     assert_eq!(parse_rpc_path("/no-dot/Method"), None);
     assert_eq!(parse_rpc_path("/incomplete"), None);
   }

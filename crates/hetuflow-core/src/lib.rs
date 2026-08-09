@@ -1,6 +1,6 @@
 //! hetuflow-core —— 工作流框架核心领域类型与纯计算 helper。
 //!
-//! 不依赖 hylx-*、ConnectRPC、Axum、SQLx、fusions。只定义领域模型、状态、错误、
+//! 不依赖任何消费方业务 crate、ConnectRPC、Axum、SQLx、fusions。只定义领域模型、状态、错误、
 //! 纯函数（hash / 退避）与常量。图校验与推进决策在 `hetuflow-runtime`；存储在
 //! `hetuflow-sqlx`；事务内编排与 worker 骨架在 `hetuflow-service`；proto↔core 映射、scope、
 //! 审计、通知等消费方绑定在宿主 adapter（框架不知道宿主是谁）。
@@ -91,7 +91,7 @@ impl WorkflowStatus {
     }
   }
 
-  /// 落库 wire number（A.5：= proto hylx_careos/workflow.proto WorkflowStatus）。
+  /// 落库 wire number（A.5：= 消费方 proto 的 WorkflowStatus）。
   /// pending=1/active=2/completed=3/errored=4/cancelled=5/returned_waiting=6。
   pub fn as_i16(self) -> i16 {
     match self {
@@ -913,7 +913,7 @@ pub trait BusinessCallbackHandler: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Scope 过滤（plain；adapter 从 HYLX TaskIdentityScope 转换）
+// Scope 过滤（plain；adapter 从消费方 TaskIdentityScope 转换）
 // ---------------------------------------------------------------------------
 
 /// 机构可见性：tenant-scoped（无 facility 限制）或仅可见若干 facility。
@@ -925,7 +925,7 @@ pub enum FacilityVisibility {
   Only(Vec<String>),
 }
 
-/// scope-filtered 读的过滤条件（脱 HYLX TaskIdentityScope）。
+/// scope-filtered 读的过滤条件（脱消费方 TaskIdentityScope）。
 #[derive(Debug, Clone)]
 pub struct ScopeFilter {
   pub tenant_id: String,

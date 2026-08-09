@@ -1,4 +1,4 @@
-//! Multi-provider LLM chat 抽象 —— 给 hylx-ai voice NLU / 未来 summary / RAG
+//! Multi-provider LLM chat 抽象 —— 给上层业务的 voice NLU / 未来 summary / RAG
 //! 等 LLM 业务复用。本期解决"单轮 chat + function calling"场景，stream / multi-turn
 //! 历史等沿用 fusion-ai 既有的 rig re-export。
 //!
@@ -14,7 +14,7 @@
 //! ## 分层
 //!
 //! ```text
-//! 业务侧 (hylx-voice NLU)
+//! 业务侧（voice NLU 等消费方）
 //!   └── 持 Arc<dyn LlmChatProvider>
 //!         └── 通过 [`factory::build_provider`] 构造，按 [`LlmProviderConfig`] 派发
 //!               ├── Qwen     (DashScope OpenAI 兼容)  → wire_openai_compat
@@ -191,7 +191,7 @@ pub struct ChatCompletionResponse {
   pub message: ChatMessage,
   pub usage: Option<TokenUsage>,
   /// 透传 vendor-specific 元数据（如 request_id / quotas / finish_reason）；
-  /// hylx-voice NLU 会把这块塞进 `voice_drafts.provider_metadata` 列做审计。
+  /// 消费方（如 voice NLU 业务）会把这块塞进其 `provider_metadata` 审计列。
   pub provider_metadata: serde_json::Value,
 }
 

@@ -49,7 +49,7 @@ pub enum ClaimSource {
 /// there); the identity headers below are what gets re-injected.
 #[derive(Clone, Debug)]
 pub struct TrustedSubject {
-  /// Who vouched for this principal (goes into logs / audit), e.g. `"hylx-careos:system"`.
+  /// Who vouched for this principal (goes into logs / audit), e.g. `"consumer-bin:system"`.
   pub principal: String,
   /// Identity headers to inject downstream, e.g. `[("x-tenant-id", "3")]`. The verifying layer
   /// derives these from whatever it verified — `AuthLayer` never invents them.
@@ -197,14 +197,14 @@ impl AsyncAuthorizeRequest<Body> for AuthAuthorizer {
           }
           log::debug!(
             target: "fusion_rpc::auth",
-            "auth: admitted trusted subject '{}' for {path} (metric=hylx.auth.trusted_subject_admitted)",
+            "auth: admitted trusted subject '{}' for {path} (metric=fusion_rpc.auth.trusted_subject_admitted)",
             subject.principal
           );
           return Ok(request);
         }
         log::warn!(
           target: "fusion_rpc::auth",
-          "auth: trusted subject '{}' is not whitelisted for {path} (metric=hylx.auth.trusted_subject_refused)",
+          "auth: trusted subject '{}' is not whitelisted for {path} (metric=fusion_rpc.auth.trusted_subject_refused)",
           subject.principal
         );
       }
@@ -268,8 +268,8 @@ fn strip_configured_identity_headers(request: &mut Request<Body>, config: &AuthC
 // Anti-forgery note: AuthLayer strips & re-injects the headers in
 // `claim_mappings`, but **does not** strip caller-supplied `Cookie` entries.
 // Rationale: cookie auth fallback path lives in `extract_bearer_token` which
-// only reads the cookie named by `AuthConfig::cookie_token_name`; HylxCtxLayer
-// downstream reads identity exclusively from the trusted `x-*-id` headers
+// only reads the cookie named by `AuthConfig::cookie_token_name`; the consumer's
+// app-side ctx layer downstream reads identity exclusively from the trusted `x-*-id` headers
 // re-injected by this layer, never from cookies. That said, callers running
 // mixed auth paths should ensure their downstream services do not consume
 // identity claims from `Cookie`. See `extract_cookie_value` below for the
@@ -320,15 +320,15 @@ mod tests {
     AuthConfig {
       exclude_paths: &["/health", "/config", "/version"],
       preserve_identity_headers_for_paths: &[],
-      exclude_rpcs: &[("hylx.auth.v1.AuthService", "Login"), ("hylx.auth.v1.AuthService", "RefreshToken")],
-      trusted_subject_rpcs: &[("hylx.permission.v1.PermissionService", "ListUsersByPermission")],
+      exclude_rpcs: &[("myapp.auth.v1.AuthService", "Login"), ("myapp.auth.v1.AuthService", "RefreshToken")],
+      trusted_subject_rpcs: &[("myapp.permission.v1.PermissionService", "ListUsersByPermission")],
       claim_mappings: &[
         ClaimMapping { header: "x-tenant-id", source: ClaimSource::String("tenant_id") },
         ClaimMapping { header: "x-user-id", source: ClaimSource::Subject },
         ClaimMapping { header: "x-facility-id", source: ClaimSource::StringOrI64("facility_id") },
         ClaimMapping { header: "x-context-type", source: ClaimSource::String("context_type") },
       ],
-      cookie_token_name: "hylx_access_token",
+      cookie_token_name: "app_access_token",
       error_code: "unauthenticated",
       error_message: "Invalid or expired token",
     }
@@ -373,7 +373,7 @@ mod tests {
     let token = make_test_token(&security, make_payload());
     let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
+      "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("authorization", format!("Bearer {}", token).as_str())],
     );
     let result = authorizer.authorize(req).await;
@@ -391,7 +391,7 @@ mod tests {
     let security = test_security();
     let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
     let req = make_request(
-      "/hylx.auth.v1.AuthService/Login",
+      "/myapp.auth.v1.AuthService/Login",
       vec![
         ("x-tenant-id", "forged-tenant"),
         ("x-user-id", "forged-user"),
@@ -417,7 +417,7 @@ mod tests {
     };
     let mut authorizer = AuthAuthorizer { security: security.clone(), config };
     let req = make_request(
-      "/agent-api/hylx.provider_credential.v1.ProviderCredentialService/ListProviders",
+      "/agent-api/myapp.provider_credential.v1.ProviderCredentialService/ListProviders",
       vec![("x-tenant-id", "tenant-1"), ("x-user-id", "user-1")],
     );
     let result = authorizer.authorize(req).await.unwrap();
@@ -440,7 +440,7 @@ mod tests {
     let token = make_test_token(&security, payload);
     let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
+      "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("authorization", format!("Bearer {}", token).as_str())],
     );
     let result = authorizer.authorize(req).await;
@@ -459,7 +459,7 @@ mod tests {
   #[tokio::test]
   async fn test_exempt_rpc_passes() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
-    let req = make_request("/hylx.auth.v1.AuthService/Login", vec![]);
+    let req = make_request("/myapp.auth.v1.AuthService/Login", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
   }
@@ -467,7 +467,7 @@ mod tests {
   #[tokio::test]
   async fn test_missing_authorization_returns_401() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
-    let req = make_request("/hylx.resident.v1.ResidentService/ListResidents", vec![]);
+    let req = make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
     let response = result.unwrap_err();
@@ -478,7 +478,7 @@ mod tests {
   async fn test_invalid_bearer_scheme_returns_401() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
     let req =
-      make_request("/hylx.resident.v1.ResidentService/ListResidents", vec![("authorization", "Basic dXNlcjpwYXNz")]);
+      make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("authorization", "Basic dXNlcjpwYXNz")]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
     let response = result.unwrap_err();
@@ -491,8 +491,8 @@ mod tests {
     let token = make_test_token(&security, make_payload());
     let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
-      vec![("cookie", format!("hylx_access_token={}", token).as_str())],
+      "/myapp.resident.v1.ResidentService/ListResidents",
+      vec![("cookie", format!("app_access_token={}", token).as_str())],
     );
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
@@ -505,9 +505,9 @@ mod tests {
     let token = make_test_token(&security, make_payload());
     let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
     // Cookie present but under the framework-default name, while config
-    // expects `hylx_access_token` — must be treated as missing auth.
+    // expects `app_access_token` — must be treated as missing auth.
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
+      "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("cookie", format!("access_token={}", token).as_str())],
     );
     let result = authorizer.authorize(req).await;
@@ -535,7 +535,7 @@ mod tests {
   #[tokio::test]
   async fn test_trusted_subject_admitted_only_for_whitelisted_rpc() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
-    let req = trusted_subject_request("/hylx.permission.v1.PermissionService/ListUsersByPermission");
+    let req = trusted_subject_request("/myapp.permission.v1.PermissionService/ListUsersByPermission");
     let result = authorizer.authorize(req).await.expect("whitelisted trusted subject is admitted");
     // The forged inbound header was stripped and replaced by the subject's own value.
     assert_eq!(result.headers().get("x-tenant-id").unwrap(), "3");
@@ -547,7 +547,7 @@ mod tests {
   #[tokio::test]
   async fn test_trusted_subject_outside_whitelist_still_401() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
-    let req = trusted_subject_request("/hylx.resident.v1.ResidentService/ListResidents");
+    let req = trusted_subject_request("/myapp.resident.v1.ResidentService/ListResidents");
     let result = authorizer.authorize(req).await;
     assert!(result.is_err(), "an off-whitelist RPC MUST NOT be reachable by a trusted subject");
     assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
@@ -557,7 +557,7 @@ mod tests {
   async fn test_whitelisted_rpc_without_trusted_subject_still_401() {
     // The whitelist does NOT make the RPC anonymous.
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
-    let req = make_request("/hylx.permission.v1.PermissionService/ListUsersByPermission", vec![]);
+    let req = make_request("/myapp.permission.v1.PermissionService/ListUsersByPermission", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
@@ -566,7 +566,7 @@ mod tests {
   #[tokio::test]
   async fn test_trusted_subject_with_unrepresentable_header_is_refused() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
-    let mut req = make_request("/hylx.permission.v1.PermissionService/ListUsersByPermission", vec![]);
+    let mut req = make_request("/myapp.permission.v1.PermissionService/ListUsersByPermission", vec![]);
     req.extensions_mut().insert(TrustedSubject {
       principal: "sibling-bin:system".to_string(),
       // A control character can never be a header value (http rejects it) — the point is that an
@@ -582,7 +582,7 @@ mod tests {
   async fn test_invalid_token_returns_401() {
     let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
     let req = make_request(
-      "/hylx.resident.v1.ResidentService/ListResidents",
+      "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("authorization", "Bearer not-a-valid-token")],
     );
     let result = authorizer.authorize(req).await;

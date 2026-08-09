@@ -5,7 +5,7 @@ use thiserror::Error;
 ///
 /// 跨 crate `From<MqError> for fusions::DataError` 暂未提供 —— 待该 crate 进入主线
 /// `fusions` 聚合时再统一迁入 `fusions::error`（fusions skill 规约）。
-/// 当前 hylx 仓内业务 caller 在 service 边界自行 `map_err`。
+/// 当前消费方业务 caller 在 service 边界自行 `map_err`。
 #[derive(Debug, Error)]
 pub enum MqError {
   #[error("mq config invalid: {0}")]

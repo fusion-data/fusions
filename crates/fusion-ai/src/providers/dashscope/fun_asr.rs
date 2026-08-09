@@ -245,7 +245,7 @@ fn validate_provider_options(options: &serde_json::Value) -> Result<(), SpeechTo
 /// BCP-47 标签 → DashScope 认的主语言子标签(`zh-CN` → `zh`)。
 ///
 /// provider 的取值表是 `zh` / `en` 这一级;调用方按 BCP-47 传 `zh-CN` 是完全正常的写法
-/// (careos 的 locale 就是这么存的),不该因此被拒。归一发生在最靠近 wire 的一层,且不丢失
+/// (调用方按地区存 locale 是常见做法),不该因此被拒。归一发生在最靠近 wire 的一层,且不丢失
 /// 调用方意图 —— `zh-CN` 与 `zh` 对一个只区分语言的识别器是同一件事。空标签整条丢弃。
 fn primary_language_subtags(hints: &[String]) -> Vec<String> {
   let mut out: Vec<String> = Vec::with_capacity(hints.len());
@@ -1442,7 +1442,7 @@ mod tests {
 
   #[test]
   fn language_hints_are_reduced_to_primary_subtags() {
-    // careos 的 locale 是 `zh-CN`,而 provider 的取值表是 `zh` 这一级。带地区的 BCP-47 标签
+    // 调用方的 locale 可能是 `zh-CN`,而 provider 的取值表是 `zh` 这一级。带地区的 BCP-47 标签
     // MUST NOT 因此被拒,也 MUST NOT 原样下发。
     assert_eq!(primary_language_subtags(&["zh-CN".into(), "en-US".into()]), vec!["zh", "en"]);
     // 归一后重复的标签合并,顺序保持。

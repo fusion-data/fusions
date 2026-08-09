@@ -5,7 +5,7 @@ members = ["crates/*", "examples/*"]
 [workspace.package]
 version = "0.3.0"
 description = "Fusion framework workspace"
-authors = ["Hylx Team"]
+authors = ["HetuOS Team"]
 license = "LicenseRef-Proprietary"
 repository = "https://github.com/fusion-data/fusions"
 edition = "2024"
