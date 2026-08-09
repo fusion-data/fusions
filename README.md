@@ -20,7 +20,7 @@ Fusion Framework 承袭此意：
 | 二火 | `fusion-core`                | 运行之心 — Application/Component/Plugin 核心 |
 | 三木 | `fusion-web` / `fusion-rpc` | 向外生长 — Web 与 ConnectRPC 服务            |
 | 四金 | `fusion-security`            | 坚固防护 — 认证与加密                        |
-| 五土 | `fusionsql` / `fusion-db`    | 厚德载物 — 数据持久化                        |
+| 五土 | `fusion-sql` / `fusion-db`    | 厚德载物 — 数据持久化                        |
 
 ## 架构
 
@@ -39,7 +39,7 @@ Fusion Framework 承袭此意：
          │              ┌──────┴──────┐               │
          │              │             │               │
    ┌─────┴─────┐   ┌────┴───┐   ┌────┴────┐    ┌─────┴─────┐
-   │ fusionsql   │   │fusion-web│   │fusion-rpc│    │  fusion-ai  │
+   │ fusion-sql  │   │fusion-web│   │fusion-rpc│    │  fusion-ai  │
    │ fusion-db   │   └────────┘   └─────────┘    └───────────┘
    └───────────┘
 ```
@@ -52,11 +52,14 @@ Fusion Framework 承袭此意：
 | `fusion-core`        | 核心框架：Application、Component、Plugin 生命周期管理 |
 | `fusion-core-macros` | 过程宏：Builder 派生等编译时增强                      |
 | `fusion-security`    | 安全模块：JWT、密码哈希、OAuth2                       |
-| `fusionsql`          | SQL 工具：查询构建器、ORM 模式                        |
-| `fusion-db`          | 数据库：连接池、事务管理                              |
+| `fusion-sql-core`    | SQL 核心：`Id` 等基础类型                             |
+| `fusion-sql`         | SQL 层：`ModelManager<C>`、`DbxPostgres`、手写 sqlx   |
+| `fusion-db`          | 数据库：连接池、事务管理、`TypedDbPlugin`             |
 | `fusion-web`         | Web 服务：Axum 封装、中间件、路由                     |
 | `fusion-rpc`         | ConnectRPC 服务与客户端 transport                    |
-| `fusion-ai`          | AI 集成：LLM、向量数据库                              |
+| `fusion-ai`          | AI 集成：LLM、向量数据库、STT                         |
+| `fusion-mq`          | 消息队列：Postgres 事件队列 producer/consumer         |
+| `hetuflow`           | 工作流框架：durable workflow（聚合包，feature-gated） |
 | `fusions`            | 聚合包：一键引入全部功能                              |
 
 ## 特性
@@ -85,25 +88,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## 依赖
+## 开发
 
-```toml
+```bash
 # 本仓 workspace 内开发
 cargo check --workspace
-cargo clippy --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features
+```
 
-# 消费仓通过 submodule + path 依赖接入
-fusions = { version = "0.2.0", path = "../repos/fusions/crates/fusions" }
-fusion-common = { version = "0.2.0", path = "../repos/fusions/crates/fusion-common" }
-fusion-web = { version = "0.2.0", path = "../repos/fusions/crates/fusion-web" }
+## 接入
+
+消费方可通过 **path 依赖**或 **git 依赖**接入（本仓 `publish = false`，不上 crates.io）：
+
+```toml
+# path 依赖（适合本地 / submodule 接入）
+fusions = { version = "0.3.0", path = "path/to/fusions/crates/fusions" }
+
+# git 依赖
+fusions = { git = "https://github.com/fusion-data/fusions.git" }
 ```
 
 ## 技术栈
 
 - **Runtime**: Tokio 1.x
 - **Web**: Axum 0.8 + Tower
-- **Database**: SQLx + SeaQuery + PostgreSQL
+- **Database**: SQLx + PostgreSQL（v0.3 删除了 sea-query / BMC ORM 层，SQL 一律手写 sqlx）
 - **Serialization**: serde + sonic-rs
 - **Observability**: tracing + tracing-subscriber + init-tracing-opentelemetry + metrics
 - **AI**: rig + rmcp

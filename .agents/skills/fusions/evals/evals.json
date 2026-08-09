@@ -1,0 +1,78 @@
+{
+  "skill_name": "fusions",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "在 fusions 后端给一个新模块加 ConnectRPC service 并挂到 web server，handler 里要查库。",
+      "expected_output": "按 Core templates：service 为持 mm 的轻量 struct（pub fn new(mm)，不 derive Component），handler 从 Context::extensions 取请求级 scoped mm（应用自定义 helper），RPC 面经 AuthLayer/ContextValidationLayer 装配挂载。",
+      "assertions": [
+        "application service 不 derive Component，由 handler 每请求 inline 构造",
+        "handler 从 Context::extensions 取 scoped ModelManager，而非 State 直取 base mm",
+        "跨 service 调用（如出现）走 Sibling::new(self.mm.clone()) 而非全局组件查找"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "用 fusion-sql 给 orders 表写一个带过滤和分页的列表查询，前端可以传排序字段。",
+      "expected_output": "repo 函数持 &DbxPostgres，用 sqlx::query_as + bind 手写 SQL（v0.3 已无 Fields/FilterNodes/BMC/Page）；查询在事务内跑以保证 RLS session vars 生效；客户端排序字段先经应用侧白名单映射为静态列名再拼进 ORDER BY，并明确框架层已不再做这项校验。",
+      "assertions": [
+        "使用 sqlx::query_as/query + bind 经 DbxPostgres，未使用已删除的 Fields/FilterNodes/DbBmc/base::* /Page",
+        "查询在事务内（mm.transaction / read_transaction 或应用 RLS helper），未出现 dbx.db() 裸连",
+        "分页 DTO 由应用/proto 契约定义，未声称框架提供 Page/PageResult",
+        "客户端排序字段经应用侧列白名单映射，未直接把客户端字符串拼进 ORDER BY，也未声称框架仍自动校验 order_bys"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "服务里的一个后台任务偶发 401：它以系统身份调另一个 bin 的 RPC，帮我查下该怎么配。",
+      "expected_output": "指向 Gotchas 中的出站 system-mode mint 语义：[fusion.security.pwd].secret_key 必须与对端解密方同值；缺失/不一致会 mint 出无效 JWE 导致 unauthenticated。",
+      "assertions": [
+        "定位到 [fusion.security.pwd] secret_key 的出站 mint 语义（而非仅入站 AuthLayer）",
+        "指出 secret_key 必须与被调方同值",
+        "给出配置落点（app.toml 对应段）而非笼统建议"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "帮我把这个 LLM 网关服务收个尾：启动后要能优雅停机，进程退出前把用量缓冲 flush 掉，另外把配置结构体打到日志里方便排障。",
+      "expected_output": "用 add_shutdown_hook 注册 flush（在 Application::await_shutdown 内执行）；WebServerBuilder 用 serve()（不是 build()）；提醒携密配置类型不能 derive Debug，api_key 字段需 <REDACTED> 脱敏输出。",
+      "assertions": [
+        "使用 add_shutdown_hook + Application::await_shutdown 承载 flush，而非自旋监听信号",
+        "服务启动使用 serve()，未使用已 deprecated 的 build()",
+        "对含 api_key/secret 的类型未使用 #[derive(Debug)]，日志输出做了脱敏处理"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "这个 RPC 方法我们这版先不做，直接返回个错误占位，客户端那边会自动重试吗？",
+      "expected_output": "用 DataError::not_implemented（system.not_implemented / Connect Unimplemented，501 语义）；明确它是永久失败、调用方不应重试；不要用 server_error 或 service_unavailable 占位（503 会被当作可重试）。",
+      "assertions": [
+        "使用 DataError::not_implemented 而非 server_error/service_unavailable 占位",
+        "说明 Unimplemented 是永久失败、客户端不应自动重试",
+        "未把未实现错误映射为 503/可重试语义"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "把 fusions 升到 0.3 之后编译不过了：找不到 crate fusionsql，UserBmc 那一堆也全红。怎么改？",
+      "expected_output": "指出 v0.3 的破坏性变更：crate 改名 fusionsql→fusion-sql / fusionsql-core→fusion-sql-core、fusionsql-macros 已删除，整个 sea-query 栈（Fields/FilterNodes/SeaFieldValue/OpVal*/DbBmc/BmcConfig/base::* /page::*/with_filter_interceptor）无替代地移除；迁移方向是 repo 函数持 DbxPostgres 手写 sqlx，实体改 sqlx::FromRow，分页 DTO 自定义；并提醒 order_bys 的框架级校验随之消失，需自建列白名单。",
+      "assertions": [
+        "点明 crate 重命名（fusionsql → fusion-sql，fusionsql-core → fusion-sql-core，macros crate 删除）",
+        "说明 BMC / Fields / FilterNodes / OpVal / Page 是无替代删除，不是改名",
+        "给出替代范式：DbxPostgres + sqlx::query_as/query，实体用 sqlx::FromRow",
+        "提示 ORDER BY 列校验不再由框架提供，需应用侧白名单"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "另一个 bin 的定时任务要调我们的 ListUsersByPermission，它没有用户 token。能不能把这个 RPC 加进 exclude_rpcs？",
+      "expected_output": "不要加 exclude_rpcs（那会让该 RPC 对任何人匿名可达）。用 v0.3 的 TrustedSubject：应用自己的外层 layer 验证来源后插入 TrustedSubject request extension（extension 不是 header，客户端伪造不了），并把该 (service, method) 列进 AuthConfig::trusted_subject_rpcs；白名单不使 RPC 匿名可达，无 token 且无 subject 仍 401。",
+      "assertions": [
+        "拒绝用 exclude_rpcs，并说明它会让该 RPC 匿名可达",
+        "给出 TrustedSubject + trusted_subject_rpcs 方案",
+        "强调 TrustedSubject 必须走 request extension 而非 header（header 可被调用方伪造）",
+        "说明白名单是 fail-closed：既无 bearer 又无 subject 的调用仍 401"
+      ]
+    }
+  ]
+}
