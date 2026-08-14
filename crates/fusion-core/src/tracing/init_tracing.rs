@@ -100,14 +100,16 @@ pub fn build_loglevel_filter_layer(c: &LogSetting) -> (EnvFilter, Option<String>
 
   let value = [
     if c.log_targets.is_empty() { None } else { Some(c.log_targets.join(",")) },
-    original_rust_log.clone().or_else(|| Some(c.log_level.to_string())),
+    // 仅保留 original_rust_log 里的 target 指令（含 '='）；裸全局级别交给 conf log_level。
+    // 见 rust_log_directives 注释：本函数被调用两次，首次临时 init 用硬编码 Trace
+    // set_var 污染 RUST_LOG，二次读回裸 "TRACE" 若原样追加 → 末尾全局 TRACE 兜底 → 日志爆炸。
+    rust_log_directives(original_rust_log.as_deref()).or_else(|| Some(c.log_level.to_string())),
   ]
   .into_iter()
   .flatten()
   .collect::<Vec<_>>()
   .join(",");
 
-  // let value = format!("{},{},{}", rust_log.unwrap_or_else(|_| c.log_level.to_string()), otel, libraries);
   let log_value = if value.ends_with(',') { &value[..value.len() - 1] } else { value.as_str() };
 
   debug!("ORIGINAL RUST_LOG: {:?}; NEW RUST_LOG: {}", original_rust_log, log_value);
@@ -115,6 +117,25 @@ pub fn build_loglevel_filter_layer(c: &LogSetting) -> (EnvFilter, Option<String>
     std::env::set_var("RUST_LOG", log_value);
   }
   (EnvFilter::from_default_env(), original_rust_log)
+}
+
+/// 从原始 RUST_LOG 字符串提取 target 指令（含 '='，如 `foo=debug`），丢弃裸全局级别
+/// （如 `TRACE` / `info`）。
+///
+/// 背景：`build_loglevel_filter_layer` 被调用两次——`init_tracing_guard`（临时 init，硬编码
+/// `log_level=Trace`）经 set_var 把 `RUST_LOG` 写成裸 `"TRACE"`；`transform_identity`（正式
+/// init）读回并经本函数追加到 `log_targets` 末尾。若原样追加裸级别，它会成为 EnvFilter
+/// 全局兜底，把所有未显式列出的 target（rig / h2 / hyper / reqwest / sqlx …）抬到该级别——
+/// rig 在 TRACE 会 `to_string_pretty` dump 完整 LLM prompt（日志爆炸 + 内容泄露），
+/// fusion_core::configuration 在 TRACE 会 dump 整套环境变量（密钥泄露）。仅保留 target 指令
+/// 即可根治：全局默认级别统一走 conf `log_level`（调用方 or_else），不再被污染的裸级别覆盖。
+fn rust_log_directives(original: Option<&str>) -> Option<String> {
+  let directives: Vec<&str> = original?
+    .split(',')
+    .map(str::trim)
+    .filter(|d| d.contains('='))
+    .collect();
+  (!directives.is_empty()).then(|| directives.join(","))
 }
 
 pub fn stdout_fmt_layer<S>(
@@ -226,4 +247,39 @@ enum ChronoFmtType {
   Rfc3339,
   /// Format according to a custom format string.
   Custom(String),
+}
+
+#[cfg(test)]
+mod tests {
+  use super::rust_log_directives;
+
+  #[test]
+  fn rust_log_directives_keeps_target_directives() {
+    // 含 '=' 的 target 指令保留（用户临时调试 override，如 RUST_LOG=foo=debug）
+    assert_eq!(
+      rust_log_directives(Some("foo=debug,bar=trace")),
+      Some("foo=debug,bar=trace".to_string())
+    );
+  }
+
+  #[test]
+  fn rust_log_directives_drops_bare_global_level() {
+    // 裸全局级别丢弃——这正是双重调用污染的来源（init_tracing_guard set RUST_LOG=TRACE）
+    assert_eq!(rust_log_directives(Some("TRACE")), None);
+    assert_eq!(rust_log_directives(Some("info")), None);
+  }
+
+  #[test]
+  fn rust_log_directives_filters_mixed_to_targets_only() {
+    // 混合输入：保留 target 指令，丢弃裸级别
+    assert_eq!(rust_log_directives(Some("TRACE,foo=debug")), Some("foo=debug".to_string()));
+    assert_eq!(rust_log_directives(Some("foo=debug,info")), Some("foo=debug".to_string()));
+  }
+
+  #[test]
+  fn rust_log_directives_none_for_empty_or_absent() {
+    assert_eq!(rust_log_directives(None), None);
+    assert_eq!(rust_log_directives(Some("")), None);
+    assert_eq!(rust_log_directives(Some("   ")), None);
+  }
 }
