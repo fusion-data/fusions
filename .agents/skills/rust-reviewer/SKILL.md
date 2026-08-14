@@ -116,6 +116,6 @@ unsafe 安全性、边界情况、测试覆盖、文档、安全、依赖、类�
 
 ## Related Skills
 
-- [`rust-best-practices`](../rust-best-practices/SKILL.md)：通用 Rust 惯用法参考（写代码时）
+- `rust-best-practices` skill：通用 Rust 惯用法参考（写代码时；按 skill 名发现加载，未必与本文同处安装）
 - [`fusions`](../fusions/SKILL.md)：Fusion 栈核心库模式（fusions 技术栈项目以其为准）
 - [`axum-tower`](../axum-tower/SKILL.md)：axum + tower Web 代码模式
