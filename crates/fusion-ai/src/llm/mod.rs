@@ -1,15 +1,14 @@
 //! Multi-provider LLM chat 抽象 —— 给上层业务的 voice NLU / 未来 summary / RAG
-//! 等 LLM 业务复用。本期解决"单轮 chat + function calling"场景，stream / multi-turn
-//! 历史等沿用 fusion-ai 既有的 rig re-export。
+//! 等 LLM 业务复用。本期解决"单轮 chat + function calling"场景；流式 / 多模态由
+//! [`crate::providers::openai_compatible`]（Responses / Chat Completions 双形态，
+//! 类型本地化）承担。
 //!
-//! ## 与现有 [`crate::providers::openai_compatible`] 的关系
+//! ## 与 [`crate::providers::openai_compatible`] 的关系
 //!
-//! `providers/openai_compatible/` 给 rig 0.27+ 提供 ProviderClient impl，绑死
-//! rig builder DSL。NLU 单轮 function call 场景下 rig builder 抽象过厚（chat
-//! history / message thread / completion choice 等），用 reqwest 直调 OpenAI
-//! 兼容 endpoint 更直观。两套实现共存：
-//! - [`crate::providers`] 模块 → rig agent / chat thread 等 multi-turn 场景
-//! - [`crate::llm`] 模块 → 单轮 chat + function call（本模块，可配 trait 加载）
+//! 两套实现共存（fusion-ai-de-rig.md §2 非目标：不合并，等首个双消费方出现再裁）：
+//! - [`crate::providers`] 模块 → OpenAI 兼容 wire 原语（Responses / 流式 / 多模态）
+//! - [`crate::llm`] 模块 → 单轮 chat + function call（本模块，可配 trait 加载；
+//!   NLU 单轮场景不需要 builder / thread 抽象，`wire_openai_compat` 直调端点）
 //!
 //! ## 分层
 //!
@@ -41,14 +40,8 @@ pub use metered::{AiUsageCtx, AiUsageEvent, AiUsageSink, MatchedScope, MeteredLl
 /// 内置 LLM provider 标识 —— 与 `provider_credentials.provider` 列约定的字符串
 /// 一一对应，避免裸字符串 typo。
 ///
-/// # 与 [`crate::DefaultProvider`] 的区别
-///
-/// `LlmProviderId` 服务 **llm chat 路径**（[`factory::build_provider`] /
-/// [`LlmProviderConfig`]），只覆盖本 crate 自研 wire 实装的少数 provider，
 /// `as_str()` 返回与 `provider_credentials.provider` 列对齐的约定字符串
-/// （注意 Qwen → `"dashscope"`）。[`crate::DefaultProvider`] 服务 **rig factory
-/// 路径**（`factory::ClientFactory`），覆盖 19 个 rig 上游 provider，`as_str()`
-/// 约定与此不同。两者服务不同子系统、`as_str()` 约定不同，**不要混用**。
+/// （注意 Qwen → `"dashscope"`），是 provider 命名口径的唯一真相源。
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum LlmProviderId {

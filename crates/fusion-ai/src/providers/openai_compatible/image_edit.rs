@@ -1,17 +1,16 @@
-use bytes::Bytes;
-use rig::http_client::multipart::Part;
-use rig::http_client::{HttpClientExt, MultipartForm};
-use rig::image_generation::ImageGenerationError;
+//! OpenAI Image Edit API（类型本地化，reqwest multipart）。
+
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-use crate::providers::openai_compatible::{ApiResponse, Client};
+use crate::providers::openai_compatible::client::{ApiResponse, Client};
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
 
-// ================================================================
-// OpenAI Image Edit API
-// ================================================================
+// Model constants are exported from image_generation module
+pub use super::image_generation::{DALL_E_2, GPT_IMAGE_1};
 
 /// Image edit response data (supports both URL and base64 formats)
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ImageEditData {
   /// URL to the generated image (optional, some providers return base64 instead)
   #[serde(default)]
@@ -20,9 +19,6 @@ pub struct ImageEditData {
   #[serde(default)]
   pub b64_json: String,
 }
-
-// Model constants are exported from image_generation module
-pub use super::image_generation::{DALL_E_2, GPT_IMAGE_1};
 
 /// Request for image editing
 #[derive(Clone, Debug)]
@@ -147,7 +143,7 @@ impl ImageEditRequest {
 }
 
 /// Token usage information for image generation (gpt-image-1 only)
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Usage {
   pub total_tokens: i64,
   pub input_tokens: i64,
@@ -156,14 +152,14 @@ pub struct Usage {
   pub input_tokens_details: InputTokensDetails,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct InputTokensDetails {
   pub text_tokens: i64,
   pub image_tokens: i64,
 }
 
-/// Response from image edit API
-#[derive(Debug, Deserialize)]
+/// Image edit wire 响应。
+#[derive(Debug, Clone, Deserialize)]
 pub struct ImageEditResponse {
   pub created: i64,
   pub data: Vec<ImageEditData>,
@@ -184,28 +180,39 @@ pub struct ImageEditResponse {
   pub usage: Option<Usage>,
 }
 
-impl TryFrom<ImageEditResponse> for rig::image_generation::ImageGenerationResponse<ImageEditResponse> {
-  type Error = ImageGenerationError;
+/// 图像编辑终态：解码后的图像字节 + 原始 wire 响应。
+#[derive(Debug, Clone)]
+pub struct ImageEditResult {
+  pub image: Vec<u8>,
+  pub response: ImageEditResponse,
+}
+
+impl TryFrom<ImageEditResponse> for ImageEditResult {
+  type Error = OpenAiCompatError;
 
   fn try_from(value: ImageEditResponse) -> Result<Self, Self::Error> {
-    let first = value.data.first().ok_or_else(|| ImageGenerationError::ResponseError("empty data array".into()))?;
+    let first = value
+      .data
+      .first()
+      .ok_or_else(|| OpenAiCompatError::ResponseParse("empty data array".into()))?;
     let url = first.url.as_str();
-    let bytes = if url.is_empty() {
+    let image = if url.is_empty() {
       // Decode from base64
-      base64::Engine::decode(&base64::prelude::BASE64_STANDARD, &first.b64_json)
-        .map_err(|e| ImageGenerationError::ResponseError(e.to_string()))?
+      base64::prelude::BASE64_STANDARD
+        .decode(&first.b64_json)
+        .map_err(|e| OpenAiCompatError::ResponseParse(e.to_string()))?
     } else {
       // Download from URL
       log::info!("Download image from URL: {}", url);
       ureq::get(url)
         .call()
-        .map_err(|e| ImageGenerationError::ResponseError(e.to_string()))?
+        .map_err(|e| OpenAiCompatError::ResponseParse(e.to_string()))?
         .into_body()
         .read_to_vec()
-        .map_err(|e| ImageGenerationError::ResponseError(e.to_string()))?
+        .map_err(|e| OpenAiCompatError::ResponseParse(e.to_string()))?
     };
 
-    Ok(rig::image_generation::ImageGenerationResponse { image: bytes, response: value })
+    Ok(ImageEditResult { image, response: value })
   }
 }
 
@@ -214,14 +221,14 @@ impl TryFrom<ImageEditResponse> for rig::image_generation::ImageGenerationRespon
 // ================================================================
 
 #[derive(Clone)]
-pub struct ImageEditModel<T = reqwest::Client> {
-  client: Client<T>,
+pub struct ImageEditModel {
+  client: Client,
   /// Name of the model (e.g.: qwen-image-edit, gpt-image-1, dall-e-2)
   pub model: String,
 }
 
-impl<T> ImageEditModel<T> {
-  pub(crate) fn new(client: Client<T>, model: &str) -> Self {
+impl ImageEditModel {
+  pub(crate) fn new(client: Client, model: &str) -> Self {
     Self { client, model: model.to_string() }
   }
 
@@ -232,8 +239,8 @@ impl<T> ImageEditModel<T> {
   /// - OpenAI API (gpt-image-1, which supports up to 16 images)
   /// - Gitee AI API (various models, typically single image)
   /// - DALL-E 2 (single image only)
-  fn build_form(&self, request: &ImageEditRequest) -> Result<MultipartForm, ImageGenerationError> {
-    let mut body = MultipartForm::new()
+  fn build_form(&self, request: &ImageEditRequest) -> reqwest::multipart::Form {
+    let mut form = reqwest::multipart::Form::new()
       .text("model", self.model.clone())
       .text("prompt", request.prompt.clone())
       .text("size", request.size.clone());
@@ -243,86 +250,89 @@ impl<T> ImageEditModel<T> {
     for (idx, image_data) in request.images.iter().enumerate() {
       let file_name = if request.images.len() == 1 { "image.png".to_string() } else { format!("image_{}.png", idx) };
 
-      body = body.part(Part::bytes("image", image_data.clone()).filename(file_name).content_type(mime::IMAGE_PNG));
+      form = form.part(
+        "image",
+        reqwest::multipart::Part::bytes(image_data.clone())
+          .file_name(file_name)
+          .mime_str(mime::IMAGE_PNG.essence_str())
+          .expect("image/png is a valid MIME type"),
+      );
     }
 
     // Add optional mask (only for DALL-E 2 single image)
     if let Some(mask_data) = &request.mask_data {
-      body = body.part(Part::bytes("mask", mask_data.clone()).filename("mask.png").content_type(mime::IMAGE_PNG));
+      form = form.part(
+        "mask",
+        reqwest::multipart::Part::bytes(mask_data.clone())
+          .file_name("mask.png")
+          .mime_str(mime::IMAGE_PNG.essence_str())
+          .expect("image/png is a valid MIME type"),
+      );
     }
 
     // Add common parameters
     if let Some(n) = request.n {
-      body = body.text("n", n.to_string());
+      form = form.text("n", n.to_string());
     }
     if let Some(user) = &request.user {
-      body = body.text("user", user.clone());
+      form = form.text("user", user.clone());
     }
 
     // Add gpt-image-1 specific parameters
     if self.model == "gpt-image-1" {
       if let Some(quality) = &request.quality {
-        body = body.text("quality", quality.clone());
+        form = form.text("quality", quality.clone());
       }
       if let Some(background) = &request.background {
-        body = body.text("background", background.clone());
+        form = form.text("background", background.clone());
       }
       if let Some(format) = &request.output_format {
-        body = body.text("output_format", format.clone());
+        form = form.text("output_format", format.clone());
       }
       if let Some(compression) = request.output_compression {
-        body = body.text("output_compression", compression.to_string());
+        form = form.text("output_compression", compression.to_string());
       }
       if let Some(fidelity) = &request.input_fidelity {
-        body = body.text("input_fidelity", fidelity.clone());
+        form = form.text("input_fidelity", fidelity.clone());
       }
       if let Some(partial) = request.partial_images {
-        body = body.text("partial_images", partial.to_string());
+        form = form.text("partial_images", partial.to_string());
       }
       if let Some(stream) = request.stream {
-        body = body.text("stream", stream.to_string());
+        form = form.text("stream", stream.to_string());
       }
     } else {
       // DALL-E 2 specific: response_format (default to b64_json)
-      body = body.text("response_format", "b64_json");
+      form = form.text("response_format", "b64_json");
     }
 
-    Ok(body)
+    form
   }
-}
 
-impl<T> ImageEditModel<T>
-where
-  T: HttpClientExt + Clone + std::fmt::Debug + Default + Send + 'static,
-{
-  /// Edit an image based on the provided request
-  pub async fn image_edit(
-    &self,
-    request: ImageEditRequest,
-  ) -> Result<rig::image_generation::ImageGenerationResponse<ImageEditResponse>, ImageGenerationError> {
-    // Build the multipart form
-    let body = self.build_form(&request)?;
+  /// Edit an image based on the provided request（multipart/form-data）。
+  pub async fn image_edit(&self, request: ImageEditRequest) -> Result<ImageEditResult, OpenAiCompatError> {
+    let form = self.build_form(&request);
 
-    // Send request
-    let req = self
+    let response = self
       .client
-      .post("/images/edits")?
-      .body(body)
-      .map_err(|e| ImageGenerationError::RequestError(Box::new(e)))?;
-    let response = self.client.http_client.send_multipart::<Bytes>(req).await?;
+      .http_client
+      .post(self.client.endpoint("/images/edits"))
+      .bearer_auth(&self.client.api_key)
+      .multipart(form)
+      .send()
+      .await?;
 
-    let status = response.status();
-    let response_body = response.into_body().into_future().await?.to_vec();
+    let status = response.status().as_u16();
+    let body = response.bytes().await.map_err(|e| OpenAiCompatError::Transport(e.to_string()))?;
 
-    if !status.is_success() {
-      let text = String::from_utf8_lossy(&response_body).to_string();
-      return Err(ImageGenerationError::ProviderError(format!("{}: {}", status, text)));
+    if !(200..300).contains(&status) {
+      let text = String::from_utf8_lossy(&body).to_string();
+      return Err(OpenAiCompatError::Http { status, message: text });
     }
 
-    // Parse response
-    match serde_json::from_slice::<ApiResponse<ImageEditResponse>>(&response_body)? {
+    match serde_json::from_slice::<ApiResponse<ImageEditResponse>>(&body).map_err(OpenAiCompatError::from)? {
       ApiResponse::Ok(response) => response.try_into(),
-      ApiResponse::Err(err) => Err(ImageGenerationError::ProviderError(err.message)),
+      ApiResponse::Err(err) => Err(err.into()),
     }
   }
 

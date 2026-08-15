@@ -4,9 +4,8 @@ use fusions::ai::graph_flow::{
   Context, ExecutionStatus, FlowRunner, GraphBuilder, GraphStorage, InMemoryGraphStorage, NextAction,
   PostgresSessionStorage, Session, SessionStorage, Task, TaskResult,
 };
-use rig::completion::Chat;
-use rig::message::Message;
-use rig::prelude::*;
+use fusions::ai::providers::openai_compatible::completion::{CompletionModel, CompletionRequest};
+use fusions::ai::providers::openai_compatible::types as core_types;
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -17,12 +16,23 @@ use uuid::Uuid;
 const MAX_RETRIES: u32 = 3;
 
 // -----------------------------------------------------------------------------
-// A wrapper around `rig` so the example compiles only when DEEPSEEK_API_KEY is set
+// DeepSeek Chat Completions 模型 + 单轮 chat helper
 // -----------------------------------------------------------------------------
-fn get_llm_agent() -> anyhow::Result<rig::agent::Agent<rig::providers::deepseek::CompletionModel>> {
+fn get_chat_model() -> anyhow::Result<CompletionModel> {
   let api_key = std::env::var("DEEPSEEK_API_KEY").map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-  let client = rig::providers::deepseek::Client::new(&api_key)?;
-  Ok(client.agent("deepseek-v4-flash").build())
+  let client =
+    fusions::ai::providers::openai_compatible::Client::builder(&api_key).base_url("https://api.deepseek.com").build();
+  Ok(client.chat_completions_model("deepseek-v4-flash"))
+}
+
+async fn chat_once(model: &CompletionModel, prompt: &str, history: Vec<core_types::Message>) -> anyhow::Result<String> {
+  let mut full_history = history;
+  full_history.push(core_types::Message::user(prompt.to_string()));
+  let request =
+    CompletionRequest::from_history(model.model(), None, full_history, vec![], None, None, None, None)
+      .map_err(|e| anyhow::anyhow!("build request failed: {e}"))?;
+  let response = model.completion(request).await.map_err(|e| anyhow::anyhow!("LLM chat failed: {e}"))?;
+  Ok(response.text().unwrap_or_default())
 }
 
 // Helper: obtain an embedding for the refined query using the `fastembed` crate.
@@ -66,23 +76,23 @@ impl Task for QueryRefinementTask {
 
     info!("Original user query: {}", user_query);
 
-    let agent = get_llm_agent().map_err(|e| TaskExecutionFailed(format!("Failed to initialize LLM agent: {}", e)))?;
+    let model = get_chat_model().map_err(|e| TaskExecutionFailed(format!("Failed to initialize LLM model: {}", e)))?;
 
-    let mut chat_history = Vec::<Message>::new();
-    let refined = agent
-            .chat(
-                &format!(
-                    r#"
+    let chat_history = Vec::new();
+    let refined = chat_once(
+            &model,
+            &format!(
+                r#"
                     You are a helpful assistant that rewrites user queries for vector search.
                     Rewrite the following user query so that it is optimised for vector search. Only return the rewritten query.
                     Query: {user_query}"#
-                ) as &str,
-                &mut chat_history,
-            )
-            .await
-            .map_err(|e| TaskExecutionFailed(format!("LLM chat failed: {}", e)))?
-            .trim()
-            .to_string();
+            ),
+            chat_history,
+        )
+        .await
+        .map_err(|e| TaskExecutionFailed(format!("LLM chat failed: {}", e)))?
+        .trim()
+        .to_string();
 
     info!("Refined query: {}", refined);
     context.set("refined_query", refined.clone()).await;
@@ -185,9 +195,9 @@ impl Task for AnswerGenerationTask {
     info!("Generating answer (attempt {} of {})", retry_count + 1, MAX_RETRIES + 1);
 
     // Get the full chat history for conversational memory
-    let history = context.get_rig_messages().await;
+    let history = context.get_messages().await;
 
-    let agent = get_llm_agent().map_err(|e| TaskExecutionFailed(format!("Failed to initialize LLM agent: {}", e)))?;
+    let model = get_chat_model().map_err(|e| TaskExecutionFailed(format!("Failed to initialize LLM model: {}", e)))?;
 
     let prompt = if history.is_empty() {
       format!(
@@ -215,9 +225,7 @@ impl Task for AnswerGenerationTask {
       )
     };
 
-    let mut history = history;
-    let answer = agent
-      .chat(&prompt, &mut history)
+    let answer = chat_once(&model, &prompt, history)
       .await
       .map_err(|e| TaskExecutionFailed(format!("LLM chat failed: {}", e)))?;
 
@@ -277,11 +285,9 @@ impl Task for ValidationTask {
             Answer: {answer}"#
     );
 
-    let agent = get_llm_agent().map_err(|e| TaskExecutionFailed(format!("Failed to initialize LLM agent: {}", e)))?;
+    let model = get_chat_model().map_err(|e| TaskExecutionFailed(format!("Failed to initialize LLM model: {}", e)))?;
 
-    let mut chat_history = Vec::<Message>::new();
-    let raw = agent
-      .chat(&prompt as &str, &mut chat_history)
+    let raw = chat_once(&model, &prompt, Vec::new())
       .await
       .map_err(|e| TaskExecutionFailed(format!("LLM chat failed: {}", e)))?;
 

@@ -94,6 +94,118 @@ impl LlmProviderConfig {
       _ => None,
     }
   }
+
+  /// Qwen（DashScope）命名构造器 —— 中性参数面（fusion-ai-de-rig.md §4.4 #1）。
+  ///
+  /// region 字符串别名归一经 [`parse_dashscope_region`]；api_key 非空校验；
+  /// `default_chat_model` 缺省回退系统默认表。bin 侧 proto 字段映射后走这里，
+  /// MUST NOT 各自维护别名表副本。
+  pub fn qwen_from_parts(
+    api_key: &str,
+    workspace_id: Option<String>,
+    region: Option<&str>,
+    default_chat_model: Option<String>,
+    timeout: Option<Duration>,
+    base_url_override: Option<String>,
+  ) -> Result<Self, LlmError> {
+    require_api_key(LlmProviderId::Qwen, api_key)?;
+    Ok(Self::Qwen {
+      api_key: api_key.to_string(),
+      workspace_id,
+      region: parse_dashscope_region(region),
+      default_chat_model: default_chat_model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL_QWEN.to_string()),
+      timeout,
+      base_url_override,
+    })
+  }
+
+  /// DeepSeek 命名构造器（中性参数面，§4.4 #1）。
+  pub fn deepseek_from_parts(
+    api_key: &str,
+    endpoint: Option<String>,
+    default_chat_model: Option<String>,
+    timeout: Option<Duration>,
+  ) -> Result<Self, LlmError> {
+    require_api_key(LlmProviderId::DeepSeek, api_key)?;
+    Ok(Self::DeepSeek {
+      api_key: api_key.to_string(),
+      endpoint,
+      default_chat_model: default_chat_model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL_DEEPSEEK.to_string()),
+      timeout,
+    })
+  }
+
+  /// OpenAI 命名构造器（中性参数面，§4.4 #1）。
+  pub fn openai_from_parts(
+    api_key: &str,
+    organization: Option<String>,
+    endpoint: Option<String>,
+    default_chat_model: Option<String>,
+    timeout: Option<Duration>,
+  ) -> Result<Self, LlmError> {
+    require_api_key(LlmProviderId::OpenAi, api_key)?;
+    Ok(Self::OpenAi {
+      api_key: api_key.to_string(),
+      organization,
+      endpoint,
+      default_chat_model: default_chat_model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL_OPENAI.to_string()),
+      timeout,
+    })
+  }
+
+  /// Anthropic 命名构造器（中性参数面，§4.4 #1）。
+  pub fn anthropic_from_parts(
+    api_key: &str,
+    default_chat_model: Option<String>,
+  ) -> Result<Self, LlmError> {
+    require_api_key(LlmProviderId::Anthropic, api_key)?;
+    Ok(Self::Anthropic {
+      api_key: api_key.to_string(),
+      default_chat_model: default_chat_model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL_ANTHROPIC.to_string()),
+    })
+  }
+
+  /// Gemini 命名构造器（中性参数面，§4.4 #1）。
+  pub fn gemini_from_parts(
+    api_key: &str,
+    default_chat_model: Option<String>,
+  ) -> Result<Self, LlmError> {
+    require_api_key(LlmProviderId::Gemini, api_key)?;
+    Ok(Self::Gemini {
+      api_key: api_key.to_string(),
+      default_chat_model: default_chat_model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL_GEMINI.to_string()),
+    })
+  }
+}
+
+/// DashScope 区域字符串解析归一 —— 唯一真相源（fusion-ai-de-rig.md §4.4 #1）。
+///
+/// 别名表：`singapore` / `intl`（大小写不敏感）→ Singapore；其余（含 None / 未知值）
+/// → Beijing。消费方 MUST NOT 自带别名副本。
+pub fn parse_dashscope_region(region: Option<&str>) -> DashScopeRegion {
+  match region.map(|x| x.to_ascii_lowercase()).as_deref() {
+    Some("singapore" | "intl") => DashScopeRegion::Singapore,
+    _ => DashScopeRegion::Beijing,
+  }
+}
+
+/// api_key 非空校验。错误只报字段名，MUST NOT 回显值（该错误会进日志）。
+fn require_api_key(provider: LlmProviderId, key: &str) -> Result<(), LlmError> {
+  if key.trim().is_empty() {
+    Err(LlmError::ConfigInvalid(provider, "api_key required".to_string()))
+  } else {
+    Ok(())
+  }
 }
 
 /// 根据 [`LlmProviderConfig`] 派发到对应 impl。错误均为 [`LlmError::ConfigInvalid`]
@@ -203,5 +315,55 @@ mod tests {
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::Qwen), "qwen3.7-plus");
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::DeepSeek), "deepseek-v4-flash");
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::OpenAi), "gpt-4o-mini");
+  }
+
+  #[test]
+  fn qwen_from_parts_normalizes_region_and_model() {
+    // 别名归一：singapore / intl（大小写不敏感）→ Singapore；None / 未知 → Beijing
+    let cfg = LlmProviderConfig::qwen_from_parts("sk-x", None, Some("INTL"), None, None, None).unwrap();
+    assert!(matches!(cfg, LlmProviderConfig::Qwen { region: DashScopeRegion::Singapore, ref default_chat_model, .. } if default_chat_model == "qwen3.7-plus"));
+
+    let cfg = LlmProviderConfig::qwen_from_parts("sk-x", None, Some("garbage"), Some("  ".into()), None, None).unwrap();
+    assert!(matches!(cfg, LlmProviderConfig::Qwen { region: DashScopeRegion::Beijing, ref default_chat_model, .. } if default_chat_model == "qwen3.7-plus"));
+
+    let cfg = LlmProviderConfig::qwen_from_parts("sk-x", None, None, Some("qwen3-max".into()), None, None).unwrap();
+    assert!(matches!(cfg, LlmProviderConfig::Qwen { ref default_chat_model, .. } if default_chat_model == "qwen3-max"));
+  }
+
+  #[test]
+  fn from_parts_rejects_blank_api_key_without_echoing_it() {
+    // LlmProviderConfig 刻意无 Debug（携密），用 match 提取错误而非 unwrap_err
+    for blank in ["", "   "] {
+      let err = match LlmProviderConfig::qwen_from_parts(blank, None, None, None, None, None) {
+        Err(e) => e,
+        Ok(_) => panic!("blank api_key must be rejected"),
+      };
+      let msg = err.to_string();
+      assert!(msg.contains("api_key required"), "got: {msg}");
+      if !blank.trim().is_empty() {
+        assert!(!msg.contains(blank.trim()), "error must not echo the key value");
+      }
+    }
+    assert!(LlmProviderConfig::deepseek_from_parts("", None, None, None).is_err());
+    assert!(LlmProviderConfig::openai_from_parts("", None, None, None, None).is_err());
+    assert!(LlmProviderConfig::anthropic_from_parts("", None).is_err());
+    assert!(LlmProviderConfig::gemini_from_parts("", None).is_err());
+  }
+
+  #[test]
+  fn parse_dashscope_region_alias_table() {
+    assert_eq!(parse_dashscope_region(None), DashScopeRegion::Beijing);
+    assert_eq!(parse_dashscope_region(Some("singapore")), DashScopeRegion::Singapore);
+    assert_eq!(parse_dashscope_region(Some("Singapore")), DashScopeRegion::Singapore);
+    assert_eq!(parse_dashscope_region(Some("INTL")), DashScopeRegion::Singapore);
+    assert_eq!(parse_dashscope_region(Some("intl")), DashScopeRegion::Singapore);
+    assert_eq!(parse_dashscope_region(Some("garbage")), DashScopeRegion::Beijing);
+    assert_eq!(parse_dashscope_region(Some("")), DashScopeRegion::Beijing);
+  }
+
+  #[test]
+  fn deepseek_from_parts_fills_defaults() {
+    let cfg = LlmProviderConfig::deepseek_from_parts("sk-x", None, None, None).unwrap();
+    assert!(matches!(cfg, LlmProviderConfig::DeepSeek { ref default_chat_model, .. } if default_chat_model == "deepseek-v4-flash"));
   }
 }

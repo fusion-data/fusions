@@ -54,7 +54,6 @@ path = "src/example-b64-json-to-image.rs"
 
 [dependencies]
 fusions = { workspace = true, features = ["ai", "db", "logforth"] }
-rig = { workspace = true }
 rmcp = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 dotenvy = { workspace = true }

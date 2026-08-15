@@ -14,15 +14,14 @@ publish = true
 [features]
 default = ["schemars/chrono04", "with-db", "image", "audio", "video"]
 with-db = ["dep:sqlx", "sqlx/postgres"]
-image = ["rig/image"]
-audio = ["rig/audio"]
+image = []
+audio = []
 video = []
 docsrs = []
 
 [dependencies]
 fusion-common = { workspace = true, features = ["with-uuid"] }
 tokio = { workspace = true }
-rig = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 rmcp = { workspace = true }
@@ -42,6 +41,7 @@ derive_builder = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 async-stream = { workspace = true }
+eventsource-stream = { workspace = true }
 ahash = { workspace = true }
 # tracing log
 tracing = { version = "0.1" }
@@ -70,3 +70,7 @@ sqlx = { workspace = true, features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { workspace = true }
+# openai_compatible 行为基线 fixture（docs/exec-plans/active/fusion-ai-de-rig.md P0）
+wiremock = "0.6"
+futures = { workspace = true }
+serde_json = { workspace = true }

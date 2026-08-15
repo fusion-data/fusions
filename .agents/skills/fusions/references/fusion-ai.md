@@ -1,8 +1,9 @@
 # fusion-ai
 
-LLM providers (19+ via rig), graph-flow execution engine, embeddings,
-usage metering, streaming speech-to-text, optional image / audio / video
-generation.
+OpenAI 兼容 wire（Responses 默认 / Chat Completions 显式可切）、DashScope 原生流式
+STT、graph-flow 执行引擎、usage metering、可选 image / audio / video generation。
+0.4.0 起零 rig 依赖（fusion-ai-de-rig.md：类型全部本地化，`providers::openai_compatible`
+的 `types` / `errors` 是 fork 自 rig 的本地类型层）。
 
 > Open this file when working on LLM-calling code, agent loops, or anything
 > that imports from `fusions::ai::*`.
@@ -12,20 +13,16 @@ generation.
 | Feature      | Description                                       |
 | ------------ | ------------------------------------------------- |
 | `with-db`    | `PostgresSessionStorage` for graph-flow sessions  |
-| `image`      | Image generation providers                        |
-| `audio`      | rig 的音频生成 / 批量转写（**流式 STT 不受此 gate**，`speech_to_text` 与 `providers` 恒可用） |
+| `image`      | Image generation / edit providers（openai_compatible 本地实装） |
+| `audio`      | 音频生成（TTS）/ 批量转写（**流式 STT 不受此 gate**，`speech_to_text` 与 `providers` 恒可用） |
 | `video`      | Video generation (`video_generation` module)      |
-| `worker`     | Cloudflare Workers support                        |
 
 `fusions` re-exports this crate behind the top-level `ai` feature.
 
 ## Imports
 
 ```rust
-use fusions::ai::{AiError, DefaultProvider};
-use fusions::ai::factory::{
-    ClientFactory, AgentConfig, EmbeddingConfig, FactoryError,
-};
+use fusions::ai::AiError;
 use fusions::ai::llm::{LlmProviderConfig, LlmProviderId, build_provider};
 // 计量装饰器（见 Usage metering）
 use fusions::ai::llm::{
@@ -45,101 +42,99 @@ use fusions::ai::graph_flow::{
 };
 #[cfg(feature = "with-db")]
 use fusions::ai::graph_flow::PostgresSessionStorage;
-
-// rig re-export for direct access to its types when needed:
-use fusions::ai::rig;
 ```
 
 > **实现本 crate 的 trait 时，依赖也要从这里取**（v0.3 新增 re-export）：
 > `pub use {async_trait::async_trait, bytes, futures};`。`SttUplink::Audio(Bytes)`、
 > `SttUplinkStream`、`#[async_trait]` 都出现在公共 API 上，下游自带一份不同版本的
 > `bytes` / `async-trait` 会产出 `expected Bytes, found Bytes` 这种读起来像编译器
-> bug 的报错。与 `rig` 同样的 SemVer 注意事项：这些是原样透传的上游依赖。
+> bug 的报错。注意：这些是原样透传的上游依赖，不受本 crate 的 SemVer 保证。
 
-## Providers — prefer the `DefaultProvider` enum
+## Provider 命名口径
 
-`fusion-ai` exposes `DefaultProvider` for the rig factory path. New code
-should use the enum rather than ad hoc provider strings.
+`llm::LlmProviderId` 是 provider 命名的唯一真相源（`as_str()` 与
+`provider_credentials.provider` 列对齐，注意 Qwen → `"dashscope"`）。
+0.4.0 删除了服务 rig factory 路径的 `DefaultProvider` enum（19-provider 薄壳，
+零业务消费）与 `factory::ClientFactory` / `AgentConfig` / `EmbeddingConfig` /
+`FactoryError`——多 provider 归一化工厂属提前优化，消费方直接用下面的
+openai_compatible wire。
+
+## openai_compatible —— OpenAI 兼容 wire（唯一 LLM wire）
+
+DeepSeek / Moonshot / Qwen / OpenAI 四端的统一 wire。`Client::completion_model()`
+默认返回 **Responses** 形态模型；`.completions_api()` 或
+`Client::chat_completions_model()` 显式切 **Chat Completions**
+（Moonshot 仅支持后者，fusion-ai-de-rig.md §4.1 支持矩阵）。
 
 ```rust
-use fusions::ai::DefaultProvider;
+use fusions::ai::providers::openai_compatible::{Client, types as core};
+use fusions::ai::providers::openai_compatible::completion::{CompletionModel, CompletionRequest};
 
-let provider: &'static str = DefaultProvider::Anthropic.as_str();   // "anthropic"
-match name {
-    s if s == DefaultProvider::OpenAi.as_str() => /* … */,
-    s if s == DefaultProvider::Ollama.as_str() => /* … */,
-    _ => return Err(DataError::bad_request("Unknown provider")),
+let client = Client::builder(&api_key).base_url("https://api.deepseek.com").build();
+
+// Chat Completions（thinking 关闭等 provider 参数经 additional_params 注入 extra-body）
+let model: CompletionModel = client.chat_completions_model("deepseek-v4-flash");
+let request = CompletionRequest::from_history(
+    model.model(),                       // 或任意 model 覆盖
+    Some("You are a helpful assistant".into()),  // preamble → system 消息打头
+    vec![core::Message::user("Hello")],
+    vec![],                              // tools（core::ToolDefinition）
+    None,                                // tool_choice
+    Some(0.7),                           // temperature
+    Some(8192),                          // max_tokens（一等字段）
+    Some(serde_json::json!({"thinking": {"type": "disabled"}})),  // extra-body
+)?;
+let response = model.completion(request).await?;
+let text = response.text();              // Option<String>，拼接全部 assistant 文本
+let usage = response.usage_tokens();     // core::Usage（provider 无关形态）
+let calls = response.tool_calls();       // &[ToolCall]
+
+// Responses 形态（Qwen 关思考用 reasoning.effort="none"）
+use fusions::ai::providers::openai_compatible::responses_api;
+let responses_model = client.completion_model("qwen3.7-plus");
+let request = responses_api::CompletionRequest::from_history(
+    "qwen3.7-plus", None, vec![core::Message::user("你好")],
+    vec![], None, None, Some(131_072),
+    Some(serde_json::json!({"reasoning": {"effort": "none"}})),
+)?;
+let response = responses_model.completion(request).await?;
+```
+
+### 流式（SSE 双终态形态）
+
+Chat Completions 流以 `data: [DONE]` 结束；Responses 流没有 `[DONE]`，
+终态由 `response.completed / incomplete / failed` 事件携带。两形态事件枚举同名
+（`completion::streaming::StreamingChoice` / `responses_api::streaming::StreamingChoice`）：
+`Text(delta)` → `ToolCall { id, call_id, name, arguments }` →
+`ToolCallDelta { id, content }` → `Reasoning` → `Final(终态 usage)`。
+
+```rust
+use futures::StreamExt;
+use fusions::ai::providers::openai_compatible::completion::streaming::StreamingChoice;
+
+let mut stream = model.stream(request).await?;   // stream:true + include_usage 由实现注入
+while let Some(choice) = stream.next().await {
+    match choice? {
+        StreamingChoice::Text(delta) => { /* 逐 token */ }
+        StreamingChoice::Final(final_response) => {
+            // final_response.usage: prompt/completion/total tokens
+        }
+        _ => {}
+    }
 }
 ```
 
-Enum variants (`#[non_exhaustive]`):
-`Anthropic`, `Azure`, `Cohere`, `DeepSeek`, `Galadriel`, `Gemini`,
-`Groq`, `HuggingFace`, `Hyperbolic`, `Mira`, `Mistral`, `Moonshot`,
-`Ollama`, `OpenAi`, `OpenAiCompatible`, `OpenRouter`, `Perplexity`,
-`Together`, `XAi`.
+### 多模态面（本地实装，reqwest multipart）
 
-The Gemini method on `ClientFactory` is named `google()` (Google Gemini),
-but the provider short name and `DefaultProvider::Gemini.as_str()` are
-both `"gemini"`.
+- `client.embedding_model_with_ndims(model, ndims)` → `embed_texts` → `Vec<Embedding { document, vec }>`
+- `client.transcription_model("whisper-1")` → `transcription(TranscriptionRequest::new(data, filename)…)` → `.text`
+- `client.image_generation_model("dall-e-3")` → `image_generation(ImageGenerationRequest::new(prompt).with_size(w, h))` → `.image`（bytes）
+- `client.image_edit_model("dall-e-2")` → `image_edit(ImageEditRequest::new_single(…))` → `.image`
+- `client.audio_generation_model("tts-1")` → `audio_generation(AudioGenerationRequest::new(text, voice))` → `.audio`
+- `client.verify()` → 凭证探测（401 → `Http { 401 }`，5xx → 瞬态）
 
-## ClientFactory
-
-```rust
-use fusions::ai::factory::ClientFactory;
-
-let factory = ClientFactory::new();
-let openai     = factory.openai("sk-…")?;
-let anthropic  = factory.anthropic("sk-ant-…")?;
-let deepseek   = factory.deepseek("sk-…", Some("https://api.deepseek.com"))?;
-let gemini     = factory.google("AIza-…")?;          // Google Gemini
-let ollama     = factory.ollama("http://localhost:11434")?;
-
-// openai_compatible takes (base_url, api_key) — NOT (api_key, base_url).
-let compat = factory.openai_compatible("https://my-endpoint/v1", "sk-…");
-```
-
-All client constructors return `http_client::Result<T>`; convert at the
-service boundary with `?` (mapped to `AiError`/`DataError` via the
-`fusions::error` impls).
-
-### Agent variants
-
-`ClientFactory` also exposes `*_agent` constructors (`openai_agent`,
-`anthropic_agent`, `deepseek_agent`, `google_agent`, `ollama_agent`,
-`openai_compatible_agent`, …) that wrap a built client with an
-`AgentConfig` in one call.
-
-```rust
-use fusions::ai::factory::{AgentConfig, ClientFactory};
-
-let factory = ClientFactory::new();
-let agent = factory.anthropic_agent(
-    &factory.anthropic("sk-ant-…")?,
-    AgentConfig::builder()
-        .model("claude-3-5-sonnet")
-        .system_prompt("You are a careful planner.")
-        .temperature(0.2)
-        .max_tokens(1024)
-        .build()?,
-)?;
-```
-
-## Embeddings
-
-```rust
-use fusions::ai::factory::{ClientFactory, EmbeddingConfig};
-
-let vectors = ClientFactory::new().embeddings(
-    &EmbeddingConfig {
-        provider: DefaultProvider::OpenAi.as_str().into(),
-        model:    "text-embedding-3-small".into(),
-        dims:     1536,
-        api_key:  Some("sk-…".into()),
-        base_url: None,
-    },
-    vec!["hello".into(), "world".into()],
-).await?;
-```
+行为基线：`crates/fusion-ai/tests/`（wiremock fixture 按端点方言组织——OpenAI 官方 /
+DashScope / DeepSeek / Kimi 各一，后续加端点先加方言样例）。
 
 ## Graph Flow — task DAG with optional persistence
 
@@ -241,9 +236,10 @@ match result.status {
 ctx.set("key", "value").await;
 let value: Option<String> = ctx.get("key").await;
 
-// chat history (rig-compatible):
+// chat history（openai_compatible 内部消息格式，可直接喂 CompletionRequest::from_history）:
 ctx.add_user_message("Hello!".into()).await;
 ctx.add_assistant_message("Hi there!".into()).await;
+let history = ctx.get_messages().await;          // Vec<openai_compatible::types::Message>
 let last5 = ctx.get_last_messages(5).await;
 ```
 
@@ -302,9 +298,9 @@ let provider: Arc<dyn LlmChatProvider> =
 
 ## Streaming STT（`speech_to_text` + `providers::dashscope`）
 
-面向**双向流 / 长连接**的实时识别（WebSocket / gRPC streaming），区别于 rig 的批量
-文件转写 `TranscriptionModel`。v0.3 用 `FunAsrRealtime`（DashScope Fun-ASR）替换了
-已删除的 `paraformer` 模块。
+面向**双向流 / 长连接**的实时识别（WebSocket / gRPC streaming），区别于
+openai_compatible 的批量文件转写 `TranscriptionModel`。v0.3 用 `FunAsrRealtime`
+（DashScope Fun-ASR）替换了已删除的 `paraformer` 模块。
 
 ```rust
 #[async_trait]
@@ -370,29 +366,28 @@ pub trait SpeechToText: Send + Sync {
 ```rust
 pub enum AiError {
     Custom(String),
-    FactoryError(FactoryError),
-    CompletionError(rig::completion::CompletionError),
-    ImageGenerationError(rig::image_generation::ImageGenerationError),
+    OpenAiCompat(#[from] OpenAiCompatError),
 }
 
-pub enum FactoryError {
-    InvalidProvider(String),
-    MissingApiKey(String),
-    MissingBaseUrl(String),
-    HttpClientError(String),
-    EmbeddingError(String),
+pub enum OpenAiCompatError {
+    Http { status: u16, message: String },  // provider 非 2xx
+    Transport(String),                      // 连接层（reqwest send 失败）
+    ResponseParse(String),                  // 反序列化 / SSE 帧非法
+    RequestBuild(String),                   // 请求构造
+    Stream(String),                         // 流中途错误
 }
+// OpenAiCompatError::is_upstream_transient()：Transport / Http(5xx|429) → true
 ```
 
-`AiError -> DataError` is in `fusions::error` (feature `ai`)，映射分级：
-上游 HTTP / Provider 瞬态错误 → 503（可重试）、请求构造 / 响应解析 / 工厂装配
-缺陷 → 500，均保留 source 错误链。Graph-flow's
+`AiError -> DataError` is in `fusions::error` (feature `ai`)，映射分级判据的唯一
+真相源是 `AiError::is_upstream_transient()`：上游瞬态 → 503（可重试）、本地缺陷 → 500，
+均保留 source 错误链。Graph-flow's
 own `GraphError` lives in `fusions::ai::graph_flow::GraphError`; map it at
 the service boundary (there is no aggregate `GraphError -> DataError` impl).
 
 ### 携密类型与 Debug
 
-`AgentConfig` / `EmbeddingConfig` / LLM transport / provider credentials 均为
+`openai_compatible::Client`（api_key）/ LLM transport / provider credentials 均为
 手写 Debug，`api_key` 打印 `<REDACTED>` —— 新增携密类型 MUST 沿用该约定，
 MUST NOT `#[derive(Debug)]`（`tracing::debug!(?config)` 会把明文密钥落日志）。
 
@@ -413,8 +408,8 @@ MUST NOT `#[derive(Debug)]`（`tracing::debug!(?config)` 会把明文密钥落�
 
 ## Best practices
 
-1. **Use the enum, not the strings.** `DefaultProvider::Anthropic` beats
-   `"anthropic"` — typos become compile errors instead of runtime `None`s.
+1. **用 `LlmProviderId`，不用裸字符串。** `LlmProviderId::DeepSeek` beats
+   `"deepseek"` — typos become compile errors instead of runtime `None`s.
 2. **Persist sessions in production.** `InMemorySessionStorage` is for
    tests only; long-running workflows need `PostgresSessionStorage`.
 3. **Keep Task `id()` stable and unique.** Edges and conditional routing
@@ -422,14 +417,18 @@ MUST NOT `#[derive(Debug)]`（`tracing::debug!(?config)` 会把明文密钥落�
 4. **Treat `WaitForInput` like a checkpoint.** The runner stops there and
    only `continue_with_input(...)` advances — your handler is what
    bridges the external prompt back into the flow.
+5. **Moonshot 端点必须显式 `chat_completions_model`**；Qwen 默认 Responses
+   （关思考 `reasoning.effort="none"`），DeepSeek 留 Chat Completions
+   （`thinking:{type:disabled}`；Responses 形态无完全关闭档，fusion-ai-de-rig.md §P5b）。
 
 ## Code locations
 
-- `crates/fusion-ai/src/lib.rs` — `DefaultProvider` enum、`rig` / `async_trait` / `bytes` / `futures` re-export
-- `crates/fusion-ai/src/client.rs` — `ClientFactory`, `AgentConfig`, `EmbeddingConfig`
+- `crates/fusion-ai/src/lib.rs` — `async_trait` / `bytes` / `futures` re-export
+- `crates/fusion-ai/src/providers/openai_compatible/` — OpenAI 兼容 wire（`types.rs` 本地类型层 / `errors.rs` 错误模型 / `completion/` chat / `responses_api/` / 多模态面）
+- `crates/fusion-ai/tests/` — wiremock 行为基线 fixture（端点方言样例）
 - `crates/fusion-ai/src/llm/` — self-hosted chat provider trait + `LlmProviderConfig`
 - `crates/fusion-ai/src/llm/metered.rs` — `MeteredLlmProvider`, `AiUsageCtx/Event/Sink`
 - `crates/fusion-ai/src/speech_to_text/mod.rs` — `SpeechToText` trait、`SttUplink`、`AudioStreamConfig`
 - `crates/fusion-ai/src/providers/dashscope/fun_asr.rs` — Fun-ASR 实时 STT 实装
 - `crates/fusion-ai/src/graph_flow/{graph,runner,task,context,storage}.rs`
-- `crates/fusion-ai/src/error.rs` — `AiError`, `FactoryError`
+- `crates/fusion-ai/src/error.rs` — `AiError`（收敛形态，§Errors）

@@ -1,64 +1,75 @@
 // ================================================================
-// OpenAI Completion API
+// OpenAI Completion API（Chat Completions，类型本地化）
 // ================================================================
 use std::convert::Infallible;
 use std::fmt;
 use std::str::FromStr;
 
-use rig::completion::{CompletionError, CompletionRequest as CoreCompletionRequest, GetTokenUsage};
-use rig::http_client::{self, HttpClientExt};
-use rig::message::{AudioMediaType, DocumentSourceKind, ImageDetail, MimeType};
-use rig::one_or_many::string_or_one_or_many;
-use rig::telemetry::{ProviderResponseExt, SpanCombinator};
-use rig::{OneOrMany, completion, message};
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, info_span};
 
 use crate::json_utils;
-
-// 复用 rig 的模型常量
-pub use rig::providers::openai::completion::{
-  GPT_4, GPT_4_1, GPT_4_1_2025_04_14, GPT_4_1_MINI, GPT_4_1_NANO, GPT_4_5_PREVIEW, GPT_4_5_PREVIEW_2025_02_27,
-  GPT_4_32K, GPT_4_32K_0613, GPT_4_0125_PREVIEW, GPT_4_0613, GPT_4_1106_PREVIEW, GPT_4_1106_VISION_PREVIEW,
-  GPT_4_TURBO, GPT_4_TURBO_2024_04_09, GPT_4_TURBO_PREVIEW, GPT_4_VISION_PREVIEW, GPT_4O, GPT_4O_2024_05_13,
-  GPT_4O_2024_11_20, GPT_4O_MINI, O1, O1_2024_12_17, O1_MINI, O1_MINI_2024_09_12, O1_PREVIEW, O1_PREVIEW_2024_09_12,
-  O1_PRO, O3, O3_MINI, O3_MINI_2025_01_31, O4_MINI, O4_MINI_2025_04_16,
-};
-
-// 复用 rig 的类型（用于转换和兼容）
-pub use rig::providers::openai::completion::{
-  AssistantContent as RigAssistantContent, AudioAssistant as RigAudioAssistant, Function as RigFunction,
-  ImageUrl as RigImageUrl, InputAudio as RigInputAudio, SystemContent as RigSystemContent,
-  SystemContentType as RigSystemContentType, ToolChoice as RigToolChoice, ToolType as RigToolType,
-};
-
-use super::{ApiErrorResponse, ApiResponse, Client, streaming::StreamingCompletionResponse};
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
+use crate::providers::openai_compatible::types::{self as core, OneOrMany};
+use crate::providers::openai_compatible::{ApiResponse, Client};
 
 pub mod streaming;
 
-impl From<ApiErrorResponse> for CompletionError {
-  fn from(err: ApiErrorResponse) -> Self {
-    CompletionError::ProviderError(err.message)
-  }
-}
+// 模型常量（fork 自 rig providers::openai::completion，演进自主）
+pub const GPT_4: &str = "gpt-4";
+pub const GPT_4_32K: &str = "gpt-4-32k";
+pub const GPT_4_32K_0613: &str = "gpt-4-32k-0613";
+pub const GPT_4_0613: &str = "gpt-4-0613";
+pub const GPT_4_1106_PREVIEW: &str = "gpt-4-1106-preview";
+pub const GPT_4_0125_PREVIEW: &str = "gpt-4-0125-preview";
+pub const GPT_4_TURBO_PREVIEW: &str = "gpt-4-turbo-preview";
+pub const GPT_4_TURBO: &str = "gpt-4-turbo";
+pub const GPT_4_TURBO_2024_04_09: &str = "gpt-4-turbo-2024-04-09";
+pub const GPT_4_1106_VISION_PREVIEW: &str = "gpt-4-1106-vision-preview";
+pub const GPT_4_VISION_PREVIEW: &str = "gpt-4-vision-preview";
+pub const GPT_4O: &str = "gpt-4o";
+pub const GPT_4O_2024_05_13: &str = "gpt-4o-2024-05-13";
+pub const GPT_4O_2024_11_20: &str = "gpt-4o-2024-11-20";
+pub const GPT_4O_MINI: &str = "gpt-4o-mini";
+pub const GPT_4_1: &str = "gpt-4.1";
+pub const GPT_4_1_2025_04_14: &str = "gpt-4.1-2025-04-14";
+pub const GPT_4_1_MINI: &str = "gpt-4.1-mini";
+pub const GPT_4_1_NANO: &str = "gpt-4.1-nano";
+pub const GPT_4_5_PREVIEW: &str = "gpt-4.5-preview";
+pub const GPT_4_5_PREVIEW_2025_02_27: &str = "gpt-4.5-preview-2025-02-27";
+pub const O1: &str = "o1";
+pub const O1_2024_12_17: &str = "o1-2024-12-17";
+pub const O1_MINI: &str = "o1-mini";
+pub const O1_MINI_2024_09_12: &str = "o1-mini-2024-09-12";
+pub const O1_PREVIEW: &str = "o1-preview";
+pub const O1_PREVIEW_2024_09_12: &str = "o1-preview-2024-09-12";
+pub const O1_PRO: &str = "o1-pro";
+pub const O3: &str = "o3";
+pub const O3_MINI: &str = "o3-mini";
+pub const O3_MINI_2025_01_31: &str = "o3-mini-2025-01-31";
+pub const O4_MINI: &str = "o4-mini";
+pub const O4_MINI_2025_04_16: &str = "o4-mini-2025-04-16";
 
+/// Chat Completions wire 消息。
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
   #[serde(alias = "developer")]
   System {
-    #[serde(deserialize_with = "string_or_one_or_many")]
+    #[serde(deserialize_with = "core::string_or_one_or_many")]
     content: OneOrMany<SystemContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
   },
   User {
-    #[serde(deserialize_with = "string_or_one_or_many")]
+    #[serde(deserialize_with = "core::string_or_one_or_many")]
     content: OneOrMany<UserContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
   },
   Assistant {
+    // DashScope 兼容端要求 assistant content 字段恒序列化（缺失 → 400），
+    // 因此不用 skip_serializing_if
     #[serde(default, deserialize_with = "json_utils::string_or_vec")]
     content: Vec<AssistantContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,6 +88,20 @@ pub enum Message {
 impl Message {
   pub fn system(content: &str) -> Self {
     Message::System { content: OneOrMany::one(content.to_owned().into()), name: None }
+  }
+
+  pub fn user(content: &str) -> Self {
+    Message::User { content: OneOrMany::one(content.to_owned().into()), name: None }
+  }
+
+  pub fn assistant(content: &str) -> Self {
+    Message::Assistant {
+      content: vec![AssistantContent::Text { text: content.to_owned() }],
+      refusal: None,
+      audio: None,
+      name: None,
+      tool_calls: vec![],
+    }
   }
 }
 
@@ -108,15 +133,6 @@ pub enum AssistantContent {
   Refusal { refusal: String },
 }
 
-impl From<AssistantContent> for completion::AssistantContent {
-  fn from(value: AssistantContent) -> Self {
-    match value {
-      AssistantContent::Text { text } => completion::AssistantContent::text(text),
-      AssistantContent::Refusal { refusal } => completion::AssistantContent::text(refusal),
-    }
-  }
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum UserContent {
@@ -137,14 +153,14 @@ pub enum UserContent {
 pub struct ImageUrl {
   pub url: String,
   #[serde(default)]
-  pub detail: ImageDetail,
+  pub detail: core::ImageDetail,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct InputAudio {
   pub data: String,
-  pub format: AudioMediaType,
+  pub format: core::AudioMediaType,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -198,11 +214,11 @@ pub enum ToolType {
 #[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
   pub r#type: String,
-  pub function: completion::ToolDefinition,
+  pub function: core::ToolDefinition,
 }
 
-impl From<completion::ToolDefinition> for ToolDefinition {
-  fn from(tool: completion::ToolDefinition) -> Self {
+impl From<core::ToolDefinition> for ToolDefinition {
+  fn from(tool: core::ToolDefinition) -> Self {
     Self { r#type: "function".into(), function: tool }
   }
 }
@@ -216,16 +232,18 @@ pub enum ToolChoice {
   Required,
 }
 
-impl TryFrom<rig::message::ToolChoice> for ToolChoice {
-  type Error = CompletionError;
-  fn try_from(value: rig::message::ToolChoice) -> Result<Self, Self::Error> {
+impl TryFrom<core::ToolChoice> for ToolChoice {
+  type Error = OpenAiCompatError;
+  fn try_from(value: core::ToolChoice) -> Result<Self, Self::Error> {
     let res = match value {
-      message::ToolChoice::Specific { .. } => {
-        return Err(CompletionError::ProviderError("Provider doesn't support only using specific tools".to_string()));
+      core::ToolChoice::Specific { .. } => {
+        return Err(OpenAiCompatError::request_build(
+          "Provider doesn't support only using specific tools",
+        ));
       }
-      message::ToolChoice::Auto => Self::Auto,
-      message::ToolChoice::None => Self::None,
-      message::ToolChoice::Required => Self::Required,
+      core::ToolChoice::Auto => Self::Auto,
+      core::ToolChoice::None => Self::None,
+      core::ToolChoice::Required => Self::Required,
     };
 
     Ok(res)
@@ -240,11 +258,14 @@ pub struct Function {
   pub arguments: serde_json::Value,
 }
 
-pub fn try_from_message_to_vec_input_item(message: message::Message) -> Result<Vec<Message>, message::MessageError> {
+/// 内部消息模型 → Chat Completions wire 消息。
+pub fn try_from_message_to_vec_input_item(message: core::Message) -> Result<Vec<Message>, core::MessageError> {
+  use core::{DocumentSourceKind, Message as CoreMessage};
+
   match message {
-    message::Message::User { content } => {
+    CoreMessage::User { content } => {
       let (tool_results, other_content): (Vec<_>, Vec<_>) =
-        content.into_iter().partition(|content| matches!(content, message::UserContent::ToolResult(_)));
+        content.into_iter().partition(|content| matches!(content, core::UserContent::ToolResult(_)));
 
       // If there are messages with both tool results and user content, openai will only
       //  handle tool results. It's unlikely that there will be both.
@@ -252,27 +273,25 @@ pub fn try_from_message_to_vec_input_item(message: message::Message) -> Result<V
         tool_results
           .into_iter()
           .map(|content| match content {
-            message::UserContent::ToolResult(message::ToolResult { id, content, .. }) => {
-              Ok::<_, message::MessageError>(Message::ToolResult {
-                tool_call_id: id,
+            core::UserContent::ToolResult(core::ToolResult { id, content, call_id }) => {
+              let tool_call_id = call_id.unwrap_or(id);
+              Ok::<_, core::MessageError>(Message::ToolResult {
+                tool_call_id,
                 content: {
                   let items: Vec<_> = content.into_iter().collect();
                   let mapped_items: Result<Vec<_>, _> = items
                     .into_iter()
                     .map(|content| match content {
-                      message::ToolResultContent::Text(message::Text { text, .. }) => Ok(text.into()),
-                      _ => Err(message::MessageError::ConversionError(
-                        "Tool result content does not support non-text".into(),
-                      )),
+                      core::ToolResultContent::Text(text) => Ok(text.text.into()),
+                      _ => Err(core::MessageError::conversion("Tool result content does not support non-text")),
                     })
                     .collect();
                   let mapped_items = mapped_items?;
                   if mapped_items.len() == 1 {
                     OneOrMany::one(mapped_items.into_iter().next().unwrap())
                   } else {
-                    OneOrMany::many(mapped_items).map_err(|_| {
-                      message::MessageError::ConversionError("Failed to create OneOrMany from mapped items".into())
-                    })?
+                    OneOrMany::many(mapped_items)
+                      .map_err(|_| core::MessageError::conversion("Failed to create OneOrMany from mapped items"))?
                   }
                 },
               })
@@ -284,50 +303,51 @@ pub fn try_from_message_to_vec_input_item(message: message::Message) -> Result<V
         let other_content: Vec<UserContent> = other_content
           .into_iter()
           .map(|content| match content {
-            message::UserContent::Text(message::Text { text, .. }) => Ok(UserContent::Text { text }),
-            message::UserContent::Image(message::Image { data, detail, media_type, .. }) => match data {
-              DocumentSourceKind::Url(url) => {
-                Ok(UserContent::Image { image_url: ImageUrl { url, detail: detail.unwrap_or_default() } })
-              }
+            core::UserContent::Text(text) => Ok(UserContent::Text { text: text.text }),
+            core::UserContent::Image(core::Image { data, detail, media_type, .. }) => match data {
+              DocumentSourceKind::Url(url) => Ok(UserContent::Image {
+                image_url: ImageUrl { url, detail: detail.unwrap_or_default() },
+              }),
               DocumentSourceKind::Base64(data) => {
                 let url = format!(
                   "data:{};base64,{}",
                   media_type
                     .map(|i| i.to_mime_type())
-                    .ok_or(message::MessageError::ConversionError("OpenAI Image URI must have media type".into()))?,
+                    .ok_or_else(|| core::MessageError::conversion("OpenAI Image URI must have media type"))?,
                   data
                 );
 
                 let detail = detail
-                  .ok_or(message::MessageError::ConversionError("OpenAI image URI must have image detail".into()))?;
+                  .ok_or_else(|| core::MessageError::conversion("OpenAI image URI must have image detail"))?;
 
                 Ok(UserContent::Image { image_url: ImageUrl { url, detail } })
               }
               DocumentSourceKind::Raw(_) => {
-                Err(message::MessageError::ConversionError("Raw files not supported, encode as base64 first".into()))
+                Err(core::MessageError::conversion("Raw files not supported, encode as base64 first"))
               }
-              DocumentSourceKind::Unknown => Err(message::MessageError::ConversionError("Document has no body".into())),
-              doc => Err(message::MessageError::ConversionError(format!("Unsupported document type: {doc:?}"))),
+              DocumentSourceKind::String(_) | DocumentSourceKind::Unknown => {
+                Err(core::MessageError::conversion("Document has no supported body"))
+              }
             },
-            message::UserContent::Document(message::Document { data, .. }) => {
+            core::UserContent::Document(core::Document { data, .. }) => {
               if let DocumentSourceKind::Base64(text) | DocumentSourceKind::String(text) = data {
                 Ok(UserContent::Text { text })
               } else {
-                Err(message::MessageError::ConversionError("Documents must be base64 or a string".into()))
+                Err(core::MessageError::conversion("Documents must be base64 or a string"))
               }
             }
-            message::UserContent::Audio(message::Audio {
+            core::UserContent::Audio(core::Audio {
               data: DocumentSourceKind::Base64(data), media_type, ..
             }) => Ok(UserContent::Audio {
               input_audio: InputAudio {
                 data,
                 format: match media_type {
                   Some(media_type) => media_type,
-                  None => AudioMediaType::MP3,
+                  None => core::AudioMediaType::MP3,
                 },
               },
             }),
-            _ => Err(message::MessageError::ConversionError("Tool result is in unsupported format".into())),
+            _ => Err(core::MessageError::conversion("Tool result is in unsupported format")),
           })
           .collect::<Result<Vec<_>, _>>()?;
 
@@ -337,24 +357,24 @@ pub fn try_from_message_to_vec_input_item(message: message::Message) -> Result<V
         Ok(vec![Message::User { content: other_content, name: None }])
       }
     }
-    message::Message::System { content } => Ok(vec![Message::System {
+    CoreMessage::System { content } => Ok(vec![Message::System {
       content: OneOrMany::one(SystemContent { r#type: Default::default(), text: content }),
       name: None,
     }]),
-    message::Message::Assistant { content, .. } => {
+    CoreMessage::Assistant { content, .. } => {
       let (text_content, tool_calls): (Vec<_>, Vec<_>) =
         content.into_iter().try_fold((Vec::new(), Vec::new()), |(mut texts, mut tools), content| {
           match content {
-            message::AssistantContent::Text(text) => texts.push(text),
-            message::AssistantContent::ToolCall(tool_call) => tools.push(tool_call),
-            message::AssistantContent::Reasoning(_) => {
-              return Err(message::MessageError::ConversionError(
-                "OpenAI Completions API does not support reasoning content".into(),
+            core::AssistantContent::Text(text) => texts.push(text),
+            core::AssistantContent::ToolCall(tool_call) => tools.push(tool_call),
+            core::AssistantContent::Reasoning(_) => {
+              return Err(core::MessageError::conversion(
+                "OpenAI Completions API does not support reasoning content",
               ));
             }
-            message::AssistantContent::Image(_) => {
-              return Err(message::MessageError::ConversionError(
-                "OpenAI Completions API does not support image content".into(),
+            core::AssistantContent::Image(_) => {
+              return Err(core::MessageError::conversion(
+                "OpenAI Completions API does not support image content",
               ));
             }
           }
@@ -374,32 +394,35 @@ pub fn try_from_message_to_vec_input_item(message: message::Message) -> Result<V
   }
 }
 
-impl From<message::ToolCall> for ToolCall {
-  fn from(tool_call: message::ToolCall) -> Self {
+impl From<core::ToolCall> for ToolCall {
+  fn from(tool_call: core::ToolCall) -> Self {
     Self {
       id: tool_call.id,
       r#type: ToolType::default(),
-      function: Function { name: tool_call.function.name, arguments: tool_call.function.arguments },
+      function: Function {
+        name: tool_call.function.name,
+        arguments: tool_call.function.arguments,
+      },
       signature: tool_call.signature,
       additional_params: tool_call.additional_params,
     }
   }
 }
 
-impl From<ToolCall> for message::ToolCall {
+impl From<ToolCall> for core::ToolCall {
   fn from(tool_call: ToolCall) -> Self {
     Self {
       id: tool_call.id,
       call_id: None,
-      function: message::ToolFunction { name: tool_call.function.name, arguments: tool_call.function.arguments },
+      function: core::ToolFunction { name: tool_call.function.name, arguments: tool_call.function.arguments },
       signature: tool_call.signature,
       additional_params: tool_call.additional_params,
     }
   }
 }
 
-impl TryFrom<Message> for message::Message {
-  type Error = message::MessageError;
+impl TryFrom<Message> for core::Message {
+  type Error = core::MessageError;
 
   fn try_from(message: Message) -> Result<Self, Self::Error> {
     Ok(match message {
@@ -409,51 +432,50 @@ impl TryFrom<Message> for message::Message {
           OneOrMany::one(mapped_content.into_iter().next().unwrap())
         } else {
           OneOrMany::many(mapped_content)
-            .map_err(|_| message::MessageError::ConversionError("Failed to create OneOrMany from content".into()))?
+            .map_err(|_| core::MessageError::conversion("Failed to create OneOrMany from content"))?
         };
-        message::Message::User { content: new_content }
+        core::Message::User { content: new_content }
       }
       Message::Assistant { content, tool_calls, .. } => {
         let mut content = content
           .into_iter()
           .map(|content| match content {
-            AssistantContent::Text { text } => message::AssistantContent::text(text),
-
-            // TODO: Currently, refusals are converted into text, but should be
-            //  investigated for generalization.
-            AssistantContent::Refusal { refusal } => message::AssistantContent::text(refusal),
+            AssistantContent::Text { text } => core::AssistantContent::text(text),
+            // Refusal 目前降级为 text（沿用 fork 基线行为）
+            AssistantContent::Refusal { refusal } => core::AssistantContent::text(refusal),
           })
           .collect::<Vec<_>>();
 
         content.extend(
           tool_calls
             .into_iter()
-            .map(|tool_call| Ok(message::AssistantContent::ToolCall(tool_call.into())))
-            .collect::<Result<Vec<_>, _>>()?,
+            .map(|tool_call| core::AssistantContent::ToolCall(tool_call.into()))
+            .collect::<Vec<_>>(),
         );
 
-        message::Message::Assistant {
+        core::Message::Assistant {
           id: None,
           content: OneOrMany::many(content).map_err(|_| {
-            message::MessageError::ConversionError(
-              "Neither `content` nor `tool_calls` was provided to the Message".to_owned(),
-            )
+            core::MessageError::conversion("Neither `content` nor `tool_calls` was provided to the Message")
           })?,
         }
       }
 
-      Message::ToolResult { tool_call_id, content } => message::Message::User {
-        content: OneOrMany::one(message::UserContent::tool_result(tool_call_id, {
-          let items: Vec<_> = content.into_iter().collect();
-          let mapped_items: Vec<_> =
-            items.into_iter().map(|content| message::ToolResultContent::text(content.text)).collect();
-          if mapped_items.len() == 1 {
-            OneOrMany::one(mapped_items.into_iter().next().unwrap())
-          } else {
-            OneOrMany::many(mapped_items).map_err(|_| {
-              message::MessageError::ConversionError("Failed to create OneOrMany from mapped items".into())
-            })?
-          }
+      Message::ToolResult { tool_call_id, content } => core::Message::User {
+        content: OneOrMany::one(core::UserContent::ToolResult(core::ToolResult {
+          id: tool_call_id,
+          call_id: None,
+          content: {
+            let items: Vec<_> = content.into_iter().collect();
+            let mapped_items: Vec<_> =
+              items.into_iter().map(|content| core::ToolResultContent::text(content.text)).collect();
+            if mapped_items.len() == 1 {
+              OneOrMany::one(mapped_items.into_iter().next().unwrap())
+            } else {
+              OneOrMany::many(mapped_items)
+                .map_err(|_| core::MessageError::conversion("Failed to create OneOrMany from mapped items"))?
+            }
+          },
         })),
       },
 
@@ -461,26 +483,27 @@ impl TryFrom<Message> for message::Message {
       // stop gap to avoid obnoxious error handling or panic occurring.
       Message::System { content, .. } => {
         let items: Vec<_> = content.into_iter().collect();
-        let mapped_items: Vec<_> = items.into_iter().map(|content| message::UserContent::text(content.text)).collect();
+        let mapped_items: Vec<_> = items.into_iter().map(|content| core::UserContent::text(content.text)).collect();
         let content = if mapped_items.len() == 1 {
           OneOrMany::one(mapped_items.into_iter().next().unwrap())
         } else {
-          OneOrMany::many(mapped_items).map_err(|_| {
-            message::MessageError::ConversionError("Failed to create OneOrMany from mapped items".into())
-          })?
+          OneOrMany::many(mapped_items)
+            .map_err(|_| core::MessageError::conversion("Failed to create OneOrMany from mapped items"))?
         };
-        message::Message::User { content }
+        core::Message::User { content }
       }
     })
   }
 }
 
-impl From<UserContent> for message::UserContent {
+impl From<UserContent> for core::UserContent {
   fn from(content: UserContent) -> Self {
     match content {
-      UserContent::Text { text } => message::UserContent::text(text),
-      UserContent::Image { image_url } => message::UserContent::image_url(image_url.url, None, Some(image_url.detail)),
-      UserContent::Audio { input_audio } => message::UserContent::audio(input_audio.data, Some(input_audio.format)),
+      UserContent::Text { text } => core::UserContent::text(text),
+      UserContent::Image { image_url } => {
+        core::UserContent::image_url(image_url.url, None, Some(image_url.detail))
+      }
+      UserContent::Audio { input_audio } => core::UserContent::audio(input_audio.data, Some(input_audio.format)),
     }
   }
 }
@@ -512,6 +535,7 @@ impl FromStr for AssistantContent {
     Ok(AssistantContent::Text { text: s.to_string() })
   }
 }
+
 impl From<String> for SystemContent {
   fn from(s: String) -> Self {
     SystemContent { r#type: SystemContentType::default(), text: s }
@@ -526,8 +550,9 @@ impl FromStr for SystemContent {
   }
 }
 
+// wire 方言是 OpenAI snake_case（system_fingerprint / finish_reason），
+// 不得 rename 成 camelCase，否则真实端点响应反序列化失败
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CompletionResponse {
   pub id: String,
   pub object: Option<String>,
@@ -538,96 +563,54 @@ pub struct CompletionResponse {
   pub usage: Option<Usage>,
 }
 
-impl TryFrom<CompletionResponse> for completion::CompletionResponse<CompletionResponse> {
-  type Error = CompletionError;
+impl CompletionResponse {
+  /// 首个 assistant 选择的消息。
+  pub fn assistant_message(&self) -> Option<&Message> {
+    self.choices.first().map(|choice| &choice.message)
+  }
 
-  fn try_from(response: CompletionResponse) -> Result<Self, Self::Error> {
-    let choice = response
-      .choices
-      .first()
-      .ok_or_else(|| CompletionError::ResponseError("Response contained no choices".to_owned()))?;
-
-    let content = match &choice.message {
-      Message::Assistant { content, tool_calls, .. } => {
-        let mut content = content
+  /// 首个 assistant 消息的拼接文本（Refusal 计入文本）。
+  pub fn text(&self) -> Option<String> {
+    match self.assistant_message()? {
+      Message::Assistant { content, .. } => {
+        let text = content
           .iter()
-          .filter_map(|c| {
-            let s = match c {
-              AssistantContent::Text { text } => text,
-              AssistantContent::Refusal { refusal } => refusal,
-            };
-            if s.is_empty() { None } else { Some(completion::AssistantContent::text(s)) }
+          .map(|c| match c {
+            AssistantContent::Text { text } => text.as_str(),
+            AssistantContent::Refusal { refusal } => refusal.as_str(),
           })
-          .collect::<Vec<_>>();
-
-        content.extend(
-          tool_calls
-            .iter()
-            .map(|call| {
-              completion::AssistantContent::tool_call(&call.id, &call.function.name, call.function.arguments.clone())
-            })
-            .collect::<Vec<_>>(),
-        );
-        Ok(content)
+          .collect::<Vec<_>>()
+          .join("");
+        Some(text)
       }
-      _ => Err(CompletionError::ResponseError("Response did not contain a valid message or tool call".into())),
-    }?;
+      _ => None,
+    }
+  }
 
-    let choice = OneOrMany::many(content)
-      .map_err(|_| CompletionError::ResponseError("Response contained no message or tool call (empty)".to_owned()))?;
+  /// 工具调用列表（首个选择）。
+  pub fn tool_calls(&self) -> &[ToolCall] {
+    match self.assistant_message() {
+      Some(Message::Assistant { tool_calls, .. }) => tool_calls,
+      _ => &[],
+    }
+  }
 
-    let usage = response
-      .usage
-      .as_ref()
-      .map(|usage| completion::Usage {
+  /// 通用 token 用量（provider 无关形态）。
+  pub fn usage_tokens(&self) -> core::Usage {
+    match &self.usage {
+      Some(usage) => core::Usage {
         input_tokens: usage.prompt_tokens as u64,
         output_tokens: usage.total_tokens.saturating_sub(usage.prompt_tokens) as u64,
         total_tokens: usage.total_tokens as u64,
         cached_input_tokens: 0,
         cache_creation_input_tokens: 0,
-        ..completion::Usage::new()
-      })
-      .unwrap_or_default();
-
-    Ok(completion::CompletionResponse { choice, usage, raw_response: response, message_id: None })
-  }
-}
-
-impl ProviderResponseExt for CompletionResponse {
-  type OutputMessage = Choice;
-  type Usage = Usage;
-
-  fn get_response_id(&self) -> Option<String> {
-    Some(self.id.to_owned())
-  }
-
-  fn get_response_model_name(&self) -> Option<String> {
-    Some(self.model.to_owned())
-  }
-
-  fn get_output_messages(&self) -> Vec<Self::OutputMessage> {
-    self.choices.clone()
-  }
-
-  fn get_text_response(&self) -> Option<String> {
-    let Message::User { ref content, .. } = self.choices.last()?.message.clone() else {
-      return None;
-    };
-
-    let UserContent::Text { text } = content.first() else {
-      return None;
-    };
-
-    Some(text)
-  }
-
-  fn get_usage(&self) -> Option<Self::Usage> {
-    self.usage.clone()
+      },
+      None => core::Usage::default(),
+    }
   }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Choice {
   pub index: usize,
   pub message: Message,
@@ -635,6 +618,7 @@ pub struct Choice {
   pub finish_reason: String,
 }
 
+/// Chat Completions wire 用量（OpenAI 方言：prompt_tokens / completion_tokens / total_tokens）。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Usage {
   #[serde(default)]
@@ -658,70 +642,67 @@ impl Default for Usage {
 }
 
 impl fmt::Display for Usage {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let Usage { prompt_tokens, completion_tokens: _, total_tokens } = self;
     write!(f, "Prompt tokens: {prompt_tokens} Total tokens: {total_tokens}")
   }
 }
 
-impl GetTokenUsage for Usage {
-  fn token_usage(&self) -> rig::completion::Usage {
-    let mut usage = rig::completion::Usage::new();
-    usage.input_tokens = self.prompt_tokens as u64;
-    usage.output_tokens = self.total_tokens.saturating_sub(self.prompt_tokens) as u64;
-    usage.total_tokens = self.total_tokens as u64;
-    usage
-  }
-}
-
 #[derive(Clone)]
-pub struct CompletionModel<T = reqwest::Client> {
-  pub(crate) client: Client<T>,
+pub struct CompletionModel {
+  pub(crate) client: Client,
   /// Name of the model (e.g.: gpt-3.5-turbo-1106)
   pub model: String,
 }
 
-impl<T> CompletionModel<T>
-where
-  T: HttpClientExt + Default + std::fmt::Debug + Clone + 'static,
-{
-  pub fn new(client: Client<T>, model: &str) -> Self {
+impl CompletionModel {
+  pub fn new(client: Client, model: &str) -> Self {
     Self { client, model: model.to_string() }
+  }
+
+  pub fn model(&self) -> &str {
+    &self.model
   }
 }
 
+/// Chat Completions 请求（公共构造面）。
+///
+/// `additional_params` 是 extra-body 注入点：thinking 关闭（DeepSeek
+/// `{"thinking":{"type":"disabled"}}`、Qwen `{"enable_thinking":false}`）等
+/// provider 专属参数经此展开进请求体。
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct CompletionRequest {
-  model: String,
-  messages: Vec<Message>,
+  pub model: String,
+  pub messages: Vec<Message>,
   #[serde(skip_serializing_if = "Vec::is_empty")]
-  tools: Vec<ToolDefinition>,
+  pub tools: Vec<ToolDefinition>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  tool_choice: Option<ToolChoice>,
+  pub tool_choice: Option<ToolChoice>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  temperature: Option<f64>,
+  pub temperature: Option<f64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub max_tokens: Option<u64>,
   #[serde(flatten)]
-  additional_params: Option<serde_json::Value>,
+  pub additional_params: Option<serde_json::Value>,
 }
 
-impl TryFrom<(String, CoreCompletionRequest)> for CompletionRequest {
-  type Error = CompletionError;
+impl CompletionRequest {
+  /// 从内部消息历史构造 wire 请求（preamble → system 消息打头）。
+  pub fn from_history(
+    model: impl Into<String>,
+    preamble: Option<String>,
+    history: Vec<core::Message>,
+    tools: Vec<core::ToolDefinition>,
+    tool_choice: Option<core::ToolChoice>,
+    temperature: Option<f64>,
+    max_tokens: Option<u64>,
+    additional_params: Option<serde_json::Value>,
+  ) -> Result<Self, OpenAiCompatError> {
+    let mut full_history: Vec<Message> =
+      preamble.map_or_else(Vec::new, |preamble| vec![Message::system(&preamble)]);
 
-  fn try_from((model, req): (String, CoreCompletionRequest)) -> Result<Self, Self::Error> {
-    let mut partial_history = vec![];
-    if let Some(docs) = req.normalized_documents() {
-      partial_history.push(docs);
-    }
-    let CoreCompletionRequest { preamble, chat_history, tools, temperature, additional_params, tool_choice, .. } = req;
-
-    partial_history.extend(chat_history);
-
-    let mut full_history: Vec<Message> = preamble.map_or_else(Vec::new, |preamble| vec![Message::system(&preamble)]);
-
-    // Convert and extend the rest of the history
     full_history.extend(
-      partial_history
+      history
         .into_iter()
         .map(try_from_message_to_vec_input_item)
         .collect::<Result<Vec<Vec<Message>>, _>>()?
@@ -730,140 +711,70 @@ impl TryFrom<(String, CoreCompletionRequest)> for CompletionRequest {
         .collect::<Vec<_>>(),
     );
 
+    if full_history.is_empty() {
+      return Err(OpenAiCompatError::request_build("Completion request contained no messages"));
+    }
+
     let tool_choice = tool_choice.map(ToolChoice::try_from).transpose()?;
 
-    let res = Self {
-      model,
+    Ok(Self {
+      model: model.into(),
       messages: full_history,
       tools: tools.into_iter().map(ToolDefinition::from).collect::<Vec<_>>(),
       tool_choice,
       temperature,
+      max_tokens,
       additional_params,
-    };
-
-    Ok(res)
+    })
   }
 }
 
-impl rig::telemetry::ProviderRequestExt for CompletionRequest {
-  type InputMessage = Message;
-
-  fn get_input_messages(&self) -> Vec<Self::InputMessage> {
-    self.messages.clone()
-  }
-
-  fn get_system_prompt(&self) -> Option<String> {
-    let first_message = self.messages.first()?;
-
-    let Message::System { ref content, .. } = first_message.clone() else {
-      return None;
-    };
-
-    let SystemContent { text, .. } = content.first();
-
-    Some(text)
-  }
-
-  fn get_prompt(&self) -> Option<String> {
-    let last_message = self.messages.last()?;
-
-    let Message::User { ref content, .. } = last_message.clone() else {
-      return None;
-    };
-
-    let UserContent::Text { text } = content.first() else {
-      return None;
-    };
-
-    Some(text)
-  }
-
-  fn get_model_name(&self) -> String {
-    self.model.clone()
-  }
-}
-
-impl CompletionModel<reqwest::Client> {
-  pub fn into_agent_builder(self) -> rig::agent::AgentBuilder<Self> {
-    rig::agent::AgentBuilder::new(self)
-  }
-}
-
-impl completion::CompletionModel for CompletionModel<reqwest::Client> {
-  type Response = CompletionResponse;
-  type StreamingResponse = StreamingCompletionResponse;
-  type Client = Client<reqwest::Client>;
-
-  fn make(client: &Self::Client, model: impl Into<String>) -> Self {
-    Self::new(client.clone(), &model.into())
-  }
-
-  async fn completion(
-    &self,
-    completion_request: CoreCompletionRequest,
-  ) -> Result<completion::CompletionResponse<CompletionResponse>, CompletionError> {
+impl CompletionModel {
+  /// 非流式 Chat Completions 调用。
+  pub async fn completion(&self, request: CompletionRequest) -> Result<CompletionResponse, OpenAiCompatError> {
     let span = if tracing::Span::current().is_disabled() {
       info_span!(
-          target: "rig::completions",
+          target: "fusion_ai::completions",
           "chat",
           gen_ai.operation.name = "chat",
-          gen_ai.provider.name = "openai",
-          gen_ai.request.model = self.model,
-          gen_ai.system_instructions = &completion_request.preamble,
-          gen_ai.response.id = tracing::field::Empty,
-          gen_ai.response.model = tracing::field::Empty,
+          gen_ai.provider.name = "openai-compatible",
+          gen_ai.request.model = %self.model,
           gen_ai.usage.output_tokens = tracing::field::Empty,
           gen_ai.usage.input_tokens = tracing::field::Empty,
-          gen_ai.input.messages = tracing::field::Empty,
-          gen_ai.output.messages = tracing::field::Empty,
       )
     } else {
       tracing::Span::current()
     };
 
-    let request = CompletionRequest::try_from((self.model.to_owned(), completion_request))?;
-
-    span.record_model_input(&request.messages);
-
-    let body = serde_json::to_vec(&request)?;
-
-    let req = self
-      .client
-      .post("/chat/completions")?
-      .header("Content-Type", "application/json")
-      .body(body)
-      .map_err(|e| CompletionError::HttpError(e.into()))?;
+    let body = serde_json::to_vec(&request).map_err(OpenAiCompatError::from)?;
 
     async move {
-      let response = self.client.send(req).await?;
+      let response = self.client.post_json("/chat/completions", body).send().await?;
 
-      if response.status().is_success() {
-        let text = http_client::text(response).await?;
+      if !response.status().is_success() {
+        return Err(Client::error_from_response(response).await);
+      }
 
-        match serde_json::from_str::<ApiResponse<CompletionResponse>>(&text)? {
-          ApiResponse::Ok(response) => {
-            let span = tracing::Span::current();
-            span.record_model_output(&response.choices);
-            span.record_response_metadata(&response);
-            span.record_token_usage(&response.usage);
-            tracing::debug!("OpenAI response: {response:?}");
-            response.try_into()
+      let text = response.text().await.map_err(|e| OpenAiCompatError::Transport(e.to_string()))?;
+      let parsed: ApiResponse<CompletionResponse> =
+        serde_json::from_str(&text).map_err(OpenAiCompatError::from)?;
+
+      match parsed {
+        ApiResponse::Ok(response) => {
+          let span = tracing::Span::current();
+          if let Some(usage) = &response.usage {
+            span.record("gen_ai.usage.input_tokens", usage.prompt_tokens);
+            span.record("gen_ai.usage.output_tokens", usage.total_tokens.saturating_sub(usage.prompt_tokens));
           }
-          ApiResponse::Err(err) => Err(CompletionError::ProviderError(err.message)),
+          tracing::debug!("OpenAI response: {response:?}");
+          Ok(response)
         }
-      } else {
-        let text = http_client::text(response).await?;
-        Err(CompletionError::ProviderError(text))
+        ApiResponse::Err(err) => Err(err.into()),
       }
     }
     .instrument(span)
     .await
   }
 
-  async fn stream(
-    &self,
-    request: CoreCompletionRequest,
-  ) -> Result<rig::streaming::StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-    CompletionModel::stream(self, request).await
-  }
 }
+

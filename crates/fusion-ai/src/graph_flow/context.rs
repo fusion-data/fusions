@@ -74,10 +74,9 @@
 //! # }
 //! ```
 //!
-//! ## LLM Integration (with `rig` feature)
+//! ## LLM Integration
 //!
 //! ```rust
-//! # {
 //! use fusion_ai::graph_flow::Context;
 //!
 //! # #[tokio::main]
@@ -87,13 +86,9 @@
 //! context.add_user_message("What is the capital of France?".to_string()).await;
 //! context.add_assistant_message("The capital of France is Paris.".to_string()).await;
 //!
-//! // Get messages in rig format for LLM calls
-//! let rig_messages = context.get_rig_messages().await;
-//! let recent_messages = context.get_last_rig_messages(10).await;
-//!
-//! // Use with rig's completion API
-//! // let response = agent.completion(&rig_messages).await?;
-//! # }
+//! // Get messages in the openai_compatible internal message format for LLM calls
+//! let messages = context.get_messages().await;
+//! let recent_messages = context.get_last_messages(10).await;
 //! # }
 //! ```
 
@@ -103,7 +98,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Arc, RwLock};
 
-use rig::completion::Message;
+use crate::providers::openai_compatible::types::Message as OpenAiCompatMessage;
 
 /// Represents the role of a message in a conversation.
 ///
@@ -119,10 +114,10 @@ pub enum MessageRole {
   System,
 }
 
-/// A serializable message that can be converted to/from rig::completion::Message.
+/// A serializable message that can be converted to/from the openai_compatible internal message format.
 ///
 /// This struct provides a unified message format that can be stored, serialized,
-/// and optionally converted to other formats like rig's Message type.
+/// and optionally converted to other message formats (e.g. the openai_compatible internal model).
 ///
 /// # Examples
 ///
@@ -714,11 +709,14 @@ impl Context {
   ///
   /// let last_two = context.get_last_messages(2).await;
   /// assert_eq!(last_two.len(), 2);
-  /// assert_eq!(last_two[0].content, "Message 2");
-  /// assert_eq!(last_two[1].content, "Message 3");
   /// # }
   /// ```
-  pub async fn get_last_messages(&self, n: usize) -> Vec<SerializableMessage> {
+  pub async fn get_last_messages(&self, n: usize) -> Vec<OpenAiCompatMessage> {
+    self.get_last_messages_serializable(n).await.iter().map(|msg| Self::to_message(msg)).collect()
+  }
+
+  /// Get the last N messages as serializable messages.
+  async fn get_last_messages_serializable(&self, n: usize) -> Vec<SerializableMessage> {
     if let Ok(history) = self.chat_history.read() { history.last_messages(n).to_vec() } else { Vec::new() }
   }
 
@@ -743,16 +741,14 @@ impl Context {
     if let Ok(history) = self.chat_history.read() { history.messages().to_vec() } else { Vec::new() }
   }
 
-  // Rig integration methods (only available when rig feature is enabled)
+  // LLM integration methods
 
-  /// Get all chat history messages converted to rig::completion::Message format.
-  ///
-  /// This method is only available when the "rig" feature is enabled.
+  /// Get all chat history messages converted to the openai_compatible internal
+  /// message format ([`Message`](crate::providers::openai_compatible::types::Message)).
   ///
   /// # Examples
   ///
   /// ```rust
-  /// # {
   /// use fusion_ai::graph_flow::Context;
   ///
   /// # #[tokio::main]
@@ -761,53 +757,22 @@ impl Context {
   /// context.add_user_message("Hello".to_string()).await;
   /// context.add_assistant_message("Hi there!".to_string()).await;
   ///
-  /// let rig_messages = context.get_rig_messages().await;
-  /// assert_eq!(rig_messages.len(), 2);
-  /// # }
+  /// let messages = context.get_messages().await;
+  /// assert_eq!(messages.len(), 2);
   /// # }
   /// ```
-  pub async fn get_rig_messages(&self) -> Vec<Message> {
+  pub async fn get_messages(&self) -> Vec<OpenAiCompatMessage> {
     let messages = self.get_all_messages().await;
-    messages.iter().map(|msg| self.to_rig_message(msg)).collect()
+    messages.iter().map(Self::to_message).collect()
   }
 
-  /// Get the last N messages converted to rig::completion::Message format.
-  ///
-  /// This method is only available when the "rig" feature is enabled.
-  ///
-  /// # Examples
-  ///
-  /// ```rust
-  /// # {
-  /// use fusion_ai::graph_flow::Context;
-  ///
-  /// # #[tokio::main]
-  /// # async fn main() {
-  /// let context = Context::new();
-  /// for i in 0..10 {
-  ///     context.add_user_message(format!("Message {}", i)).await;
-  /// }
-  ///
-  /// let last_5 = context.get_last_rig_messages(5).await;
-  /// assert_eq!(last_5.len(), 5);
-  /// # }
-  /// # }
-  /// ```
-  pub async fn get_last_rig_messages(&self, n: usize) -> Vec<Message> {
-    let messages = self.get_last_messages(n).await;
-    messages.iter().map(|msg| self.to_rig_message(msg)).collect()
-  }
-
-  /// Convert a SerializableMessage to a rig::completion::Message.
-  ///
-  /// This method is only available when the "rig" feature is enabled.
-  fn to_rig_message(&self, msg: &SerializableMessage) -> Message {
+  /// Convert a SerializableMessage to the openai_compatible internal message format.
+  fn to_message(msg: &SerializableMessage) -> OpenAiCompatMessage {
     match msg.role {
-      MessageRole::User => Message::user(msg.content.clone()),
-      MessageRole::Assistant => Message::assistant(msg.content.clone()),
-      // rig doesn't have a system message type, so we'll treat it as a user message
-      // with a system prefix
-      MessageRole::System => Message::user(format!("[SYSTEM] {}", msg.content)),
+      MessageRole::User => OpenAiCompatMessage::user(msg.content.clone()),
+      MessageRole::Assistant => OpenAiCompatMessage::assistant(msg.content.clone()),
+      // 内部消息模型无独立 system 转发形态，系统消息以 user 前缀承载（fork 基线行为）
+      MessageRole::System => OpenAiCompatMessage::user(format!("[SYSTEM] {}", msg.content)),
     }
   }
 }
@@ -912,8 +877,23 @@ mod tests {
 
     let last_two = context.get_last_messages(2).await;
     assert_eq!(last_two.len(), 2);
-    assert_eq!(last_two[0].content, "Message 2");
-    assert_eq!(last_two[1].content, "Response 2");
+    let text_of = |msg: &crate::providers::openai_compatible::types::Message| match msg {
+      crate::providers::openai_compatible::types::Message::User { content } => {
+        match content.first() {
+          crate::providers::openai_compatible::types::UserContent::Text(text) => text.text.clone(),
+          _ => String::new(),
+        }
+      }
+      crate::providers::openai_compatible::types::Message::Assistant { content, .. } => {
+        match content.first() {
+          crate::providers::openai_compatible::types::AssistantContent::Text(text) => text.text.clone(),
+          _ => String::new(),
+        }
+      }
+      crate::providers::openai_compatible::types::Message::System { content } => content.clone(),
+    };
+    assert_eq!(text_of(&last_two[0]), "Message 2");
+    assert_eq!(text_of(&last_two[1]), "Response 2");
   }
 
   #[tokio::test]
@@ -962,23 +942,20 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_rig_integration() {
+  async fn test_llm_message_integration() {
     let context = Context::new();
 
     context.add_user_message("Hello".to_string()).await;
     context.add_assistant_message("Hi there!".to_string()).await;
     context.add_system_message("System message".to_string()).await;
 
-    let rig_messages = context.get_rig_messages().await;
-    assert_eq!(rig_messages.len(), 3);
+    let messages = context.get_messages().await;
+    assert_eq!(messages.len(), 3);
 
-    let last_two = context.get_last_rig_messages(2).await;
+    let last_two = context.get_last_messages(2).await;
     assert_eq!(last_two.len(), 2);
 
-    // Test that the conversion works without panicking
-    // We can't easily verify the content since rig::Message doesn't expose it directly
-    // but we can verify the conversion completes without error
-    let _debug_output = format!("{:?}", rig_messages);
-    // Test passes if we reach this point without panicking
+    // conversion completes without panicking
+    let _debug_output = format!("{:?}", messages);
   }
 }

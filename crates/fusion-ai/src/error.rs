@@ -1,11 +1,10 @@
 //! # Fusion AI Error Types
 //!
-//! This module provides error types for the fusion-ai crate.
-//! For rig 0.27+, errors from the factory module use [`factory::FactoryError`].
+//! 错误收敛形态（fusion-ai-de-rig.md §4.3）：上游 wire 层错误统一走
+//! [`OpenAiCompatError`]，其 `is_upstream_transient()` 承载
+//! 「上游瞬态 vs 本地缺陷」分级语义。
 
-pub use crate::factory::FactoryError;
-use rig::completion::CompletionError;
-use rig::image_generation::ImageGenerationError;
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
 
 /// AI-related errors
 #[derive(Debug, thiserror::Error)]
@@ -15,11 +14,15 @@ pub enum AiError {
   Custom(String),
 
   #[error(transparent)]
-  FactoryError(#[from] FactoryError),
+  OpenAiCompat(#[from] OpenAiCompatError),
+}
 
-  #[error(transparent)]
-  CompletionError(#[from] CompletionError),
-
-  #[error(transparent)]
-  ImageGenerationError(#[from] ImageGenerationError),
+impl AiError {
+  /// 上游瞬态判定（委托 [`OpenAiCompatError::is_upstream_transient`]）。
+  pub fn is_upstream_transient(&self) -> bool {
+    match self {
+      Self::Custom(_) => false,
+      Self::OpenAiCompat(err) => err.is_upstream_transient(),
+    }
+  }
 }
