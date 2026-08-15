@@ -69,37 +69,9 @@ impl DashScopeCredentials {
   }
 }
 
-/// 解析凭证里的 DashScope 地域字段:`singapore` / `intl`(大小写不敏感)→ 新加坡;
-/// 缺省 / 未知值 → 北京。
-///
-/// **单点**:chat 侧 [`crate::llm::factory::LlmProviderConfig::qwen_from_parts`] 与 STT
-/// 调用方共用这一张别名表,不允许各留一份——两份必然漂移,而漂移的后果是驻留标注错标。
-pub fn parse_dashscope_region(s: Option<&str>) -> DashScopeRegion {
-  match s.map(str::to_ascii_lowercase).as_deref() {
-    Some("singapore" | "intl") => DashScopeRegion::Singapore,
-    _ => DashScopeRegion::Beijing,
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn parse_region_defaults_to_beijing_on_absent_or_unknown() {
-    assert_eq!(parse_dashscope_region(None), DashScopeRegion::Beijing);
-    assert_eq!(parse_dashscope_region(Some("")), DashScopeRegion::Beijing);
-    assert_eq!(parse_dashscope_region(Some("beijing")), DashScopeRegion::Beijing);
-    assert_eq!(parse_dashscope_region(Some("garbage")), DashScopeRegion::Beijing);
-  }
-
-  #[test]
-  fn parse_region_accepts_singapore_aliases_case_insensitively() {
-    assert_eq!(parse_dashscope_region(Some("singapore")), DashScopeRegion::Singapore);
-    assert_eq!(parse_dashscope_region(Some("Singapore")), DashScopeRegion::Singapore);
-    assert_eq!(parse_dashscope_region(Some("INTL")), DashScopeRegion::Singapore);
-    assert_eq!(parse_dashscope_region(Some("intl")), DashScopeRegion::Singapore);
-  }
 
   #[test]
   fn debug_never_leaks_api_key() {

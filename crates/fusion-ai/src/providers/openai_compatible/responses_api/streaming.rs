@@ -1,22 +1,72 @@
-//! The streaming module for the OpenAI Responses API.
-//! Please see the `openai_streaming` or `openai_streaming_with_tools` example for more practical usage.
-use crate::providers::openai_compatible::responses_api::{ReasoningSummary, ResponsesCompletionModel, ResponsesUsage};
+//! Responses API 流式（eventsource-stream 解析）。
+//!
+//! 终止形态：Responses 流没有 `[DONE]` 哨兵，终态由
+//! `response.completed` / `response.incomplete` / `response.failed` 事件携带——
+//! 收到任一终态事件即结束流（DeepSeek Responses 无状态子集实测如此）。
+
 use async_stream::stream;
+use eventsource_stream::Eventsource;
+use futures::Stream;
 use futures::StreamExt;
-use rig::completion::{CompletionError, GetTokenUsage};
-use rig::http_client::HttpClientExt;
-use rig::http_client::sse::{Event, GenericEventSource};
-use rig::streaming;
-use rig::streaming::RawStreamingChoice;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info_span};
+use std::pin::Pin;
+use tracing::info_span;
 use tracing_futures::Instrument as _;
+
+use crate::providers::openai_compatible::completion::streaming::ToolCallDeltaContent;
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
+use crate::providers::openai_compatible::responses_api::{CompletionRequest, ReasoningSummary, ResponsesCompletionModel};
+use crate::providers::openai_compatible::Client;
 
 use super::{CompletionResponse, Output};
 
 // ================================================================
 // OpenAI Responses Streaming API
 // ================================================================
+
+/// 流式终态：`response.completed` 携带的 usage。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StreamingCompletionResponse {
+  /// Token usage
+  pub usage: super::ResponsesUsage,
+}
+
+/// Responses 流事件（统一流事件枚举，Final 携带终态）。
+#[derive(Debug, Clone)]
+pub enum StreamingChoice {
+  Text(String),
+  ToolCall {
+    id: String,
+    call_id: Option<String>,
+    name: String,
+    arguments: serde_json::Value,
+  },
+  ToolCallDelta {
+    id: String,
+    content: ToolCallDeltaContent,
+  },
+  Reasoning {
+    id: Option<String>,
+    content: String,
+  },
+  Final(StreamingCompletionResponse),
+}
+
+/// Responses 流（`Stream<Item = Result<StreamingChoice, OpenAiCompatError>>`）。
+pub struct ResponsesStream {
+  inner: Pin<Box<dyn Stream<Item = Result<StreamingChoice, OpenAiCompatError>> + Send>>,
+}
+
+impl Stream for ResponsesStream {
+  type Item = Result<StreamingChoice, OpenAiCompatError>;
+
+  fn poll_next(
+    self: Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Option<Self::Item>> {
+    Pin::new(&mut self.get_mut().inner).poll_next(cx)
+  }
+}
 
 /// A streaming completion chunk.
 /// Streaming chunks can come in one of two forms:
@@ -27,23 +77,6 @@ use super::{CompletionResponse, Output};
 pub enum StreamingCompletionChunk {
   Response(Box<ResponseChunk>),
   Delta(ItemChunk),
-}
-
-/// The final streaming response from the OpenAI Responses API.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StreamingCompletionResponse {
-  /// Token usage
-  pub usage: ResponsesUsage,
-}
-
-impl GetTokenUsage for StreamingCompletionResponse {
-  fn token_usage(&self) -> rig::completion::Usage {
-    let mut usage = rig::completion::Usage::new();
-    usage.input_tokens = self.usage.input_tokens;
-    usage.output_tokens = self.usage.output_tokens;
-    usage.total_tokens = self.usage.total_tokens;
-    usage
-  }
 }
 
 /// A response chunk from OpenAI's response API.
@@ -60,7 +93,7 @@ pub struct ResponseChunk {
 
 /// Response chunk type.
 /// Renames are used to ensure that this type gets (de)serialized properly.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ResponseChunkKind {
   #[serde(rename = "response.created")]
   ResponseCreated,
@@ -75,7 +108,6 @@ pub enum ResponseChunkKind {
 }
 
 /// An item message chunk from OpenAI's Responses API.
-/// See
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ItemChunk {
   /// Item ID. Optional.
@@ -197,162 +229,154 @@ pub enum SummaryPartChunkPart {
   SummaryText { text: String },
 }
 
-impl<T> ResponsesCompletionModel<T>
-where
-  T: HttpClientExt + Clone + Default + std::fmt::Debug + Send + 'static,
-{
-  pub(crate) async fn stream(
+impl ResponsesCompletionModel {
+  /// 流式 Responses 调用（`stream` 参数由实现注入）。
+  pub async fn stream(
     &self,
-    completion_request: rig::completion::CompletionRequest,
-  ) -> Result<streaming::StreamingCompletionResponse<StreamingCompletionResponse>, CompletionError> {
-    let mut request = self.create_completion_request(completion_request)?;
-    request.stream = Some(true);
-
-    let body = serde_json::to_vec(&request)?;
-
-    let req = self
-      .client
-      .post("/responses")?
-      .header("Content-Type", "application/json")
-      .body(body)
-      .map_err(|e| CompletionError::HttpError(e.into()))?;
-
-    // let request_builder = self.client.post_reqwest("/responses").json(&request);
-
-    let span = if tracing::Span::current().is_disabled() {
-      info_span!(
-          target: "rig::completions",
-          "chat_streaming",
-          gen_ai.operation.name = "chat_streaming",
-          gen_ai.provider.name = tracing::field::Empty,
-          gen_ai.request.model = tracing::field::Empty,
-          gen_ai.response.id = tracing::field::Empty,
-          gen_ai.response.model = tracing::field::Empty,
-          gen_ai.usage.output_tokens = tracing::field::Empty,
-          gen_ai.usage.input_tokens = tracing::field::Empty,
-          gen_ai.input.messages = tracing::field::Empty,
-          gen_ai.output.messages = tracing::field::Empty,
-      )
-    } else {
-      tracing::Span::current()
-    };
-    span.record("gen_ai.provider.name", "openai");
-    span.record("gen_ai.request.model", &self.model);
-    span.record("gen_ai.input.messages", serde_json::to_string(&request.input).expect("This should always work"));
-    // Build the request with proper headers for SSE
-    let client = self.clone().client.http_client;
-
-    let mut event_source = GenericEventSource::new(client, req);
-
-    let stream = stream! {
-            let mut final_usage = ResponsesUsage::new();
-
-            let mut tool_calls: Vec<RawStreamingChoice<StreamingCompletionResponse>> = Vec::new();
-            let mut combined_text = String::new();
-            let span = tracing::Span::current();
-
-            while let Some(event_result) = event_source.next().await {
-                match event_result {
-                    Ok(Event::Open) => {
-                        tracing::trace!("SSE connection opened");
-                        tracing::info!("OpenAI stream started");
-                        continue;
-                    }
-                    Ok(Event::Message(evt)) => {
-                        // Skip heartbeat messages or empty data
-                        if evt.data.trim().is_empty() {
-                            continue;
-                        }
-
-                        let data = serde_json::from_str::<StreamingCompletionChunk>(&evt.data);
-
-                        let Ok(data) = data else {
-                            let err = data.unwrap_err();
-                            debug!("Couldn't serialize data as StreamingCompletionResponse: {:?}", err);
-                            continue;
-                        };
-
-                        if let StreamingCompletionChunk::Delta(chunk) = &data {
-                            match &chunk.data {
-                                ItemChunkKind::OutputItemDone(message) => {
-                                    match message {
-                                        StreamingItemDoneOutput {  item: Output::FunctionCall(func), .. } => {
-                                            tool_calls.push(streaming::RawStreamingChoice::ToolCall(
-                                                streaming::RawStreamingToolCall::new(func.id.clone(), func.name.clone(), func.arguments.clone())
-                                                    .with_call_id(func.call_id.clone()),
-                                            ));
-                                        }
-
-                                        StreamingItemDoneOutput {  item: Output::Reasoning {  summary, id }, .. } => {
-                                            let reasoning = summary
-                                                .iter()
-                                                .map(|x| {
-                                                    let ReasoningSummary::SummaryText { text } = x;
-                                                    text.to_owned()
-                                                })
-                                                .collect::<Vec<String>>()
-                                                .join("\n");
-                                            yield Ok(streaming::RawStreamingChoice::Reasoning { content: rig::message::ReasoningContent::Summary(reasoning), id: Some(id.to_string()) })
-                                        }
-                                        _ => continue
-                                    }
-                                }
-                                ItemChunkKind::OutputTextDelta(delta) => {
-                                    combined_text.push_str(&delta.delta);
-                                    yield Ok(streaming::RawStreamingChoice::Message(delta.delta.clone()))
-                                }
-                                ItemChunkKind::RefusalDelta(delta) => {
-                                    combined_text.push_str(&delta.delta);
-                                    yield Ok(streaming::RawStreamingChoice::Message(delta.delta.clone()))
-                                }
-                                ItemChunkKind::FunctionCallArgsDelta(delta) => {
-                                    yield Ok(streaming::RawStreamingChoice::ToolCallDelta { id: delta.item_id.clone(), content: streaming::ToolCallDeltaContent::Delta(delta.delta.clone()), internal_call_id: String::new() })
-                                }
-
-                                _ => { continue }
-                            }
-                        }
-
-                        if let StreamingCompletionChunk::Response(chunk) = data {
-                            if let ResponseChunk { kind: ResponseChunkKind::ResponseCompleted, response, .. } = *chunk {
-                                span.record("gen_ai.output.messages", serde_json::to_string(&response.output).unwrap());
-                                span.record("gen_ai.response.id", response.id);
-                                span.record("gen_ai.response.model", response.model);
-                                if let Some(usage) = response.usage {
-                                    final_usage = usage;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                    }
-                    Err(rig::http_client::Error::StreamEnded) => {
-                        event_source.close();
-                    }
-                    Err(error) => {
-                        tracing::error!(?error, "SSE error");
-                        yield Err(CompletionError::ResponseError(error.to_string()));
-                        break;
-                    }
-                }
-            }
-
-            // // Ensure event source is closed when stream ends
-            // event_source.close();
-
-            for tool_call in &tool_calls {
-                yield Ok(tool_call.to_owned())
-            }
-
-            span.record("gen_ai.usage.input_tokens", final_usage.input_tokens);
-            span.record("gen_ai.usage.output_tokens", final_usage.output_tokens);
-            tracing::info!("OpenAI stream finished");
-
-            yield Ok(RawStreamingChoice::FinalResponse(StreamingCompletionResponse {
-                usage: final_usage.clone()
-            }));
-        }.instrument(span);
-
-    Ok(streaming::StreamingCompletionResponse::stream(Box::pin(stream)))
+    request: CompletionRequest,
+  ) -> Result<ResponsesStream, OpenAiCompatError> {
+    stream_responses(&self.client, request).await
   }
+}
+
+pub(crate) async fn stream_responses(
+  client: &Client,
+  mut request: CompletionRequest,
+) -> Result<ResponsesStream, OpenAiCompatError> {
+  request.stream = Some(true);
+  let model = request.model.clone();
+
+  let body = serde_json::to_vec(&request).map_err(OpenAiCompatError::from)?;
+
+  let response = client.post_json("/responses", body).send().await?;
+  if !response.status().is_success() {
+    return Err(Client::error_from_response(response).await);
+  }
+
+  let event_source = response.bytes_stream().eventsource();
+
+  let span = info_span!(
+      target: "fusion_ai::completions",
+      "chat_streaming",
+      gen_ai.operation.name = "chat_streaming",
+      gen_ai.provider.name = "openai-compatible",
+      gen_ai.request.model = %model,
+  );
+  let s = stream! {
+      let span = tracing::Span::current();
+      let mut final_usage = super::ResponsesUsage::new();
+      let mut terminated = false;
+
+      let mut tool_calls: Vec<StreamingChoice> = Vec::new();
+      let mut combined_text = String::new();
+
+      let mut event_source = std::pin::pin!(event_source);
+
+      while !terminated {
+          let event_result = event_source.next().await;
+          let Some(event_result) = event_result else { break };
+          let message = match event_result {
+              Ok(message) => message,
+              Err(error) => {
+                  tracing::error!(?error, "SSE error");
+                  yield Err(OpenAiCompatError::Stream(error.to_string()));
+                  break;
+              }
+          };
+
+          // Skip heartbeat messages or empty data
+          if message.data.trim().is_empty() {
+              continue;
+          }
+
+          let data = serde_json::from_str::<StreamingCompletionChunk>(&message.data);
+          let Ok(data) = data else {
+              let err = data.unwrap_err();
+              tracing::debug!("Couldn't serialize data as StreamingCompletionResponse: {:?}", err);
+              continue;
+          };
+
+          if let StreamingCompletionChunk::Delta(chunk) = &data {
+              match &chunk.data {
+                  ItemChunkKind::OutputItemDone(message) => {
+                      match message {
+                          StreamingItemDoneOutput { item: Output::FunctionCall(func), .. } => {
+                              tool_calls.push(StreamingChoice::ToolCall {
+                                  id: func.id.clone(),
+                                  call_id: Some(func.call_id.clone()),
+                                  name: func.name.clone(),
+                                  arguments: func.arguments.clone(),
+                              });
+                          }
+
+                          StreamingItemDoneOutput { item: Output::Reasoning { summary, id }, .. } => {
+                              let reasoning = summary
+                                  .iter()
+                                  .map(|x| {
+                                      let ReasoningSummary::SummaryText { text } = x;
+                                      text.to_owned()
+                                  })
+                                  .collect::<Vec<String>>()
+                                  .join("\n");
+                              yield Ok(StreamingChoice::Reasoning { content: reasoning, id: Some(id.to_string()) })
+                          }
+                          _ => continue
+                      }
+                  }
+                  ItemChunkKind::OutputTextDelta(delta) => {
+                      combined_text.push_str(&delta.delta);
+                      yield Ok(StreamingChoice::Text(delta.delta.clone()))
+                  }
+                  ItemChunkKind::RefusalDelta(delta) => {
+                      combined_text.push_str(&delta.delta);
+                      yield Ok(StreamingChoice::Text(delta.delta.clone()))
+                  }
+                  ItemChunkKind::FunctionCallArgsDelta(delta) => {
+                      yield Ok(StreamingChoice::ToolCallDelta {
+                          id: delta.item_id.clone(),
+                          content: ToolCallDeltaContent::Delta(delta.delta.clone()),
+                      })
+                  }
+
+                  _ => { continue }
+              }
+          }
+
+          if let StreamingCompletionChunk::Response(chunk) = data {
+              match chunk.kind {
+                  ResponseChunkKind::ResponseCompleted => {
+                      let response = chunk.response;
+                      span.record("gen_ai.output.messages", serde_json::to_string(&response.output).unwrap_or_default());
+                      span.record("gen_ai.response.id", response.id);
+                      span.record("gen_ai.response.model", response.model);
+                      if let Some(usage) = response.usage {
+                          final_usage = usage;
+                      }
+                      // 终止形态二：Responses 流没有 [DONE]，终态事件即结束
+                      terminated = true;
+                  }
+                  ResponseChunkKind::ResponseFailed | ResponseChunkKind::ResponseIncomplete => {
+                      // provider 侧终态（失败 / 截断）：结束流，usage 保持已聚合值
+                      terminated = true;
+                  }
+                  _ => {}
+              }
+          }
+      }
+
+      for tool_call in &tool_calls {
+          yield Ok(tool_call.to_owned())
+      }
+
+      span.record("gen_ai.usage.input_tokens", final_usage.input_tokens);
+      span.record("gen_ai.usage.output_tokens", final_usage.output_tokens);
+      tracing::info!("Responses stream finished");
+
+      yield Ok(StreamingChoice::Final(StreamingCompletionResponse {
+          usage: final_usage.clone()
+      }));
+  }
+  .instrument(span);
+
+  Ok(ResponsesStream { inner: Box::pin(s) })
 }

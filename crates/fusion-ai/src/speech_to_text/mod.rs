@@ -1,9 +1,9 @@
 //! 通用流式语音识别(STT)抽象。
 //!
-//! 区别于 `rig::transcription::TranscriptionModel`(rig 的批量文件转写,走单次 HTTP
-//! `multipart/form-data` 调用),本模块面向**双向流 / 长连接**的实时 STT 协议
-//! (WebSocket / gRPC streaming),适配阿里云 Fun-ASR 实时、OpenAI Realtime transcription、
-//! 讯飞实时转写、sherpa-onnx 等。
+//! 区别于批量文件转写(单次 HTTP `multipart/form-data` 调用,见
+//! [`crate::providers::openai_compatible::transcription`]),本模块面向**双向流 /
+//! 长连接**的实时 STT 协议 (WebSocket / gRPC streaming),适配阿里云 Fun-ASR 实时、
+//! OpenAI Realtime transcription、讯飞实时转写、sherpa-onnx 等。
 //!
 //! 会话是**双向**的:上行不只是音频,还包括会话中的控制指令(如上下文增强词表更新),
 //! 故 [`SpeechToText::transcribe_realtime`] 收的是 [`SttUplinkStream`] 而非纯音频流。

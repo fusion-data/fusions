@@ -163,6 +163,7 @@ futures = "0.3"
 futures-util = "0.3"
 async-trait = "0.1"
 async-stream = "0.3"
+eventsource-stream = "0.2"
 tokio = { version = "1.52", features = [
   "macros",          # #[tokio::main] and #[tokio::test]
   "rt-multi-thread", # Multi-threaded runtime
@@ -212,9 +213,8 @@ croner = "3.0"
 hierarchical_hash_wheel_timer = { version = "1.4", features = ["uuid"] }
 # -- Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "chrono", "json", "rust_decimal"] }
-# sqlx 保持 0.8：rig / rig-postgres 保持 0.39，rig-postgres 0.40 要求 `sqlx ^0.9`，
-# 在 rig 升级前 sqlx 0.9 不可用。（sea-query / sea-query-binder / pgvector 已在 0.3.0 移除，
-# 不再构成耦合约束。）
+# sqlx 0.9 已随 rig 移除而解锁（rig-postgres 0.40 要求 sqlx ^0.9 的版本锁已消失）；
+# 升级本身独立立项，仍维持 0.8。
 # -- Serde
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_path_to_error = "0.1"
@@ -333,8 +333,6 @@ opendal = { version = "0.57", features = [
 # -- request signing (Apache opendal-reqsign — Aliyun ACS3 / AWS SigV4 等云厂商签名 trait)
 reqsign-core = { version = "3.0" }
 # -- LLM
-rig = { version = "0.39", features = ["derive"] }
-rig-postgres = { version = "0.39" }
 rmcp = { version = "2.1", features = [
   "client",
   "reqwest",

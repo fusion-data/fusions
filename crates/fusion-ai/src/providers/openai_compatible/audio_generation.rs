@@ -1,69 +1,68 @@
+//! OpenAI Audio Generation API（TTS，类型本地化）。
+
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
 use crate::providers::openai_compatible::Client;
-use bytes::Bytes;
-use rig::audio_generation::{self, AudioGenerationError, AudioGenerationRequest, AudioGenerationResponse};
-use rig::http_client::{self, HttpClientExt};
 use serde_json::json;
 
-// ================================================================
-// OpenAI Audio Generation API
-// ================================================================
+pub const TTS_1: &str = "tts-1";
+pub const TTS_1_HD: &str = "tts-1-hd";
 
-// 复用 rig 的常量
-pub use rig::providers::openai::audio_generation::{TTS_1, TTS_1_HD};
+/// 语音合成请求。
+#[derive(Clone, Debug)]
+pub struct AudioGenerationRequest {
+  pub text: String,
+  pub voice: String,
+  pub speed: f32,
+  pub additional_params: Option<serde_json::Value>,
+}
+
+impl AudioGenerationRequest {
+  pub fn new(text: impl Into<String>, voice: impl Into<String>) -> Self {
+    Self { text: text.into(), voice: voice.into(), speed: 1.0, additional_params: None }
+  }
+
+  pub fn with_speed(mut self, speed: f32) -> Self {
+    self.speed = speed;
+    self
+  }
+}
+
+/// 语音合成终态：音频字节。
+#[derive(Debug, Clone)]
+pub struct AudioGenerationResponse {
+  pub audio: Vec<u8>,
+}
 
 #[derive(Clone)]
-pub struct AudioGenerationModel<T = reqwest::Client> {
-  client: Client<T>,
+pub struct AudioGenerationModel {
+  client: Client,
   pub model: String,
 }
 
-impl<T> AudioGenerationModel<T> {
-  pub fn new(client: Client<T>, model: &str) -> Self {
+impl AudioGenerationModel {
+  pub(crate) fn new(client: Client, model: &str) -> Self {
     Self { client, model: model.to_string() }
   }
-}
 
-impl<T> audio_generation::AudioGenerationModel for AudioGenerationModel<T>
-where
-  T: HttpClientExt + Clone + std::fmt::Debug + Default + 'static,
-{
-  type Response = Bytes;
-  type Client = Client<T>;
-
-  fn make(client: &Self::Client, model: impl Into<String>) -> Self {
-    Self::new(client.clone(), &model.into())
-  }
-
-  async fn audio_generation(
+  /// 文本转语音（响应体即音频字节）。
+  pub async fn audio_generation(
     &self,
     request: AudioGenerationRequest,
-  ) -> Result<AudioGenerationResponse<Self::Response>, AudioGenerationError> {
+  ) -> Result<AudioGenerationResponse, OpenAiCompatError> {
     let body = serde_json::to_vec(&json!({
         "model": self.model,
         "input": request.text,
         "voice": request.voice,
         "speed": request.speed,
-    }))?;
+    }))
+    .map_err(OpenAiCompatError::from)?;
 
-    let req = self
-      .client
-      .post("/audio/speech")?
-      .header("Content-Type", "application/json")
-      .body(body)
-      .map_err(http_client::Error::from)?;
-
-    let response = self.client.send(req).await?;
-
+    let response = self.client.post_json("/audio/speech", body).send().await?;
     if !response.status().is_success() {
-      let status = response.status();
-      let bytes: Bytes = response.into_body().await?;
-      let text = String::from_utf8_lossy(&bytes);
-
-      return Err(AudioGenerationError::ProviderError(format!("{}: {}", status, text)));
+      return Err(Client::error_from_response(response).await);
     }
 
-    let bytes: Bytes = response.into_body().await?;
-
-    Ok(AudioGenerationResponse { audio: bytes.to_vec(), response: bytes })
+    let bytes = response.bytes().await.map_err(|e| OpenAiCompatError::Transport(e.to_string()))?;
+    Ok(AudioGenerationResponse { audio: bytes.to_vec() })
   }
 }

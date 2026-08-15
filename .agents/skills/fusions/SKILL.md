@@ -9,7 +9,7 @@ description: >
   (`ModelManager`/`ModelContext`/`TypedDbPlugin`) over sqlx via
   `DbxPostgres`, Axum (`WebError`/`WebServerBuilder`), ConnectRPC
   (`AuthLayer`/`ContextValidationLayer`/`TrustedSubject`/`ConnectTransport`),
-  JWT/OAuth/ACS3, MQ producer/consumer plugins, AI factory/graph_flow/STT,
+  JWT/OAuth/ACS3, MQ producer/consumer plugins, AI openai_compatible wire/graph_flow/STT,
   RLS/session-var transactions, trusted-header auth, and east-west
   client transport. Also covers migrating off the v0.2 `fusionsql` /
   sea-query / BMC API that v0.3 deleted. Do not use for frontend code.
@@ -52,7 +52,7 @@ Full migration table (old symbol → replacement) at the top of
 | RPC        | `fusions::rpc::*`       | `AuthLayer`, `ContextValidationLayer`, `TrustedSubject`, `mount_rpc_services`, `build_connect_transport`, `ConnectTransport` |
 | SQL        | `fusions::sql::*`       | `ModelManager<C>`, `ModelContext`, `store::DbxPostgres`, `id::Id`, `DbConfig`, `SqlError` |
 | Security   | `fusions::security::*`  | `SecurityError`, `jwt::token::make_token`, `oauth::OAuthClient` |
-| AI         | `fusions::ai::*`        | `factory::ClientFactory`, `graph_flow::*`, `llm::MeteredLlmProvider`, `speech_to_text::SpeechToText`, `AiError` |
+| AI         | `fusions::ai::*`        | `providers::openai_compatible::*` (Responses 默认 / Chat Completions 显式), `graph_flow::*`, `llm::MeteredLlmProvider`, `speech_to_text::SpeechToText`, `AiError` |
 | MQ         | `fusion_mq::*`          | `MessageQueuePlugin`, `EventProducerHandle`, `EventConsumerHandle`, `PublishEvent`, `RetryDecision` |
 
 > The aggregate crate `fusions` re-exports each sub-crate behind a feature
@@ -473,5 +473,5 @@ actively touching that module — they are detailed and would crowd context.
 | JWT token make/decrypt, password hashing, OAuth2 / Aliyun ACS3  | [fusion-security](references/fusion-security.md)                      |
 | MQ producer/consumer plugin, `fusion.mq` config, zombie reaping | [fusion-mq](references/fusion-mq.md)                                  |
 | `ModelManager<C>` / `ModelContext`, `DbxPostgres` + sqlx repo shape, transactions, `SqlError`, **v0.2 → v0.3 migration table** | [fusion-sql](references/fusion-sql.md)      |
-| LLM provider factory, graph-flow Task/Graph/Session, usage metering, streaming STT | [fusion-ai](references/fusion-ai.md)                |
+| OpenAI-compatible LLM wire (Responses/Chat Completions), graph-flow Task/Graph/Session, usage metering, streaming STT | [fusion-ai](references/fusion-ai.md)                |
 | Feature flag combinations, top-level re-exports, quick-start    | [fusions](references/fusions.md)                                      |

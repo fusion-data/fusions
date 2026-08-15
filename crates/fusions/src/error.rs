@@ -576,19 +576,11 @@ impl From<fusion_security::SecurityError> for DataError {
 #[cfg(feature = "ai")]
 impl From<fusion_ai::AiError> for DataError {
   fn from(value: fusion_ai::AiError) -> Self {
-    use fusion_ai::AiError;
-    use fusion_ai::rig::completion::CompletionError;
-    use fusion_ai::rig::image_generation::ImageGenerationError;
-
     let msg = value.to_string();
-    // 上游连接失败 / provider 返回错误 → 503（瞬态，可重试）；
-    // 请求构造 / 响应解析 / 工厂装配缺陷 → 500（本服务缺陷，重试无意义）。
-    let upstream_transient = matches!(
-      &value,
-      AiError::CompletionError(CompletionError::HttpError(_) | CompletionError::ProviderError(_))
-        | AiError::ImageGenerationError(ImageGenerationError::HttpError(_) | ImageGenerationError::ProviderError(_))
-    );
-    if upstream_transient {
+    // 上游连接失败 / provider 5xx/429 → 503（瞬态，可重试）；
+    // 请求构造 / 响应解析 / 本地缺陷 → 500（重试无意义）。
+    // 分级判据的唯一真相源 = `AiError::is_upstream_transient`（fusion-ai-de-rig.md §4.3）。
+    if value.is_upstream_transient() {
       DataError::internal(codes::SERVICE_UNAVAILABLE, msg, Some(Box::new(value)))
     } else {
       DataError::server_error(msg).with_source(value)
@@ -621,17 +613,36 @@ mod tests {
   #[test]
   fn ai_error_maps_transient_upstream_to_service_unavailable() {
     use fusion_ai::AiError;
-    use fusion_ai::rig::completion::CompletionError;
+    use fusion_ai::providers::openai_compatible::errors::OpenAiCompatError;
 
-    // provider / HTTP 上游错误 → 503（可重试），并保留错误链
-    let err: DataError = AiError::CompletionError(CompletionError::ProviderError("rate limited".into())).into();
-    assert_eq!(err.code.as_ref(), codes::SERVICE_UNAVAILABLE);
-    assert!(core::error::Error::source(&err).is_some(), "source chain must be preserved");
+    // provider 5xx / 429 / 连接层错误 → 503（可重试），并保留错误链
+    let transient_cases = [
+      OpenAiCompatError::Http { status: 429, message: "rate limited".into() },
+      OpenAiCompatError::Http { status: 503, message: "upstream down".into() },
+      OpenAiCompatError::Transport("connect refused".into()),
+    ];
+    for case in transient_cases {
+      let err: DataError = AiError::OpenAiCompat(case).into();
+      assert_eq!(err.code.as_ref(), codes::SERVICE_UNAVAILABLE, "transient must map to 503");
+      assert!(core::error::Error::source(&err).is_some(), "source chain must be preserved");
+    }
 
-    // 本地缺陷（响应解析失败）→ 500
-    let err: DataError = AiError::CompletionError(CompletionError::ResponseError("bad json".into())).into();
+    // 本地缺陷（响应解析 / 请求构造 / 4xx）→ 500
+    let local_cases = [
+      OpenAiCompatError::ResponseParse("bad json".into()),
+      OpenAiCompatError::RequestBuild("missing field".into()),
+      OpenAiCompatError::Http { status: 400, message: "bad request".into() },
+      OpenAiCompatError::Stream("mid-stream".into()),
+    ];
+    for case in local_cases {
+      let err: DataError = AiError::OpenAiCompat(case).into();
+      assert_eq!(err.code.as_ref(), codes::INTERNAL_ERROR, "local defect must map to 500");
+      assert!(core::error::Error::source(&err).is_some(), "source chain must be preserved");
+    }
+
+    // AiError::Custom → 500
+    let err: DataError = AiError::Custom("plain failure".into()).into();
     assert_eq!(err.code.as_ref(), codes::INTERNAL_ERROR);
-    assert!(core::error::Error::source(&err).is_some(), "source chain must be preserved");
   }
 
   #[cfg(feature = "db")]

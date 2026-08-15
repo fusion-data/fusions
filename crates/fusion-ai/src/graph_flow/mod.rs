@@ -172,6 +172,7 @@ pub mod fanout;
 pub mod graph;
 pub mod runner;
 pub mod storage;
+#[cfg(feature = "with-db")]
 pub mod storage_postgres;
 pub mod task;
 
@@ -182,6 +183,7 @@ pub use fanout::FanOutTask;
 pub use graph::{ExecutionResult, ExecutionStatus, Graph, GraphBuilder};
 pub use runner::FlowRunner;
 pub use storage::{GraphStorage, InMemoryGraphStorage, InMemorySessionStorage, Session, SessionStorage};
+#[cfg(feature = "with-db")]
 pub use storage_postgres::PostgresSessionStorage;
 pub use task::{NextAction, Task, TaskResult};
 

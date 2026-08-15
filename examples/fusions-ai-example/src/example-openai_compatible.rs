@@ -1,54 +1,38 @@
-use fusions::ai::{
-  AiError, DefaultProvider,
-  client::{AgentConfigBuilder, ClientFactory},
-  providers::openai_compatible::CompletionModel,
-};
-use rig::completion::Completion;
-use rig::message::Message;
+use fusions::ai::AiError;
+use fusions::ai::providers::openai_compatible::completion::{CompletionModel, CompletionRequest};
+use fusions::ai::providers::openai_compatible::types as core_types;
 
-/// 示例：使用 OpenAI 兼容 API 调用模型
+/// 示例：使用 OpenAI 兼容 API 调用模型（本地 wire，无 rig）
 ///
-/// `RUST_LOG=debug cargo run -p fusion-ai --example example-openai_compatible`
+/// `RUST_LOG=debug cargo run -p fusions-ai-example --bin example-openai-compat`
 #[tokio::main]
 async fn main() -> Result<(), AiError> {
   dotenvy::dotenv().unwrap();
   logforth::starter_log::stdout().apply();
 
-  let config = AgentConfigBuilder::default()
-    .provider(DefaultProvider::OpenAiCompatible.as_str())
-    .name("Openai Compatible Agent")
+  // 可切换的端点（Kimi / DeepSeek / SiliconFlow / 智谱）：Moonshot 等仅支持
+  // chat completions 的端点必须走 `chat_completions_model`（fusion-ai-de-rig.md §4.1）
+  let base_url = "https://ai.gitee.com/v1";
+  let api_key = std::env::var("GITEE_AI_API_KEY").unwrap();
+  let model_name = "Kimi-K2-Thinking";
 
-    // .base_url("https://open.bigmodel.cn/api/coding/paas/v4")
-    // .api_key(std::env::var("ZAI_API_KEY").unwrap())
-    // .model("glm-4.6")
+  let client = fusions::ai::providers::openai_compatible::Client::builder(&api_key).base_url(base_url).build();
+  let model: CompletionModel = client.chat_completions_model(model_name);
 
-    // .base_url("https://api.deepseek.com/v1")
-    // .api_key(std::env::var("DEEPSEEK_API_KEY").unwrap())
-    // .model("deepseek-v4-flash")
+  let request = CompletionRequest::from_history(
+    model.model(),
+    Some("你是一个 AI 助手".to_string()),
+    vec![core_types::Message::user("你是谁？")],
+    vec![],
+    None,
+    Some(0.7),
+    None,
+    None,
+  )?;
 
-    // .base_url("https://api.siliconflow.cn/v1")
-    // .api_key(std::env::var("SILICONFLOW_API_KEY").unwrap())
-    // .model("deepseek-ai/DeepSeek-OCR")
+  let response = model.completion(request).await?;
 
-    .base_url("https://ai.gitee.com/v1")
-    .api_key(std::env::var("GITEE_AI_API_KEY").unwrap())
-    .model("Kimi-K2-Thinking")
-
-    .description("使用 Fusion AI 的示例 AI Agent")
-    .system_prompt("你是一个 AI 助手")
-    .temperature(0.7)
-    // .max_tokens(248000)
-    .build()
-    .unwrap();
-
-  let factory =
-    ClientFactory::new().openai_compatible(config.base_url.as_ref().unwrap(), config.api_key.as_ref().unwrap());
-  let agent = CompletionModel::new(factory.to_inner_cloned(), &config.model).into_agent_builder().build();
-
-  let request = agent.completion("你是谁？", Vec::<Message>::new()).await?;
-  let response = request.send().await?;
-
-  println!("Response usage: {}", serde_json::to_string_pretty(&response.usage).unwrap());
-  println!("Response choice: {}", serde_json::to_string_pretty(&response.choice).unwrap());
+  println!("Response usage: {:?}", response.usage);
+  println!("Response text: {}", response.text().unwrap_or_default());
   Ok(())
 }

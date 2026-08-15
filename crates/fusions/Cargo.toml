@@ -125,7 +125,6 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 # -- misc
 ulid = { workspace = true, optional = true }
-rig = { workspace = true }
 rmcp = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }

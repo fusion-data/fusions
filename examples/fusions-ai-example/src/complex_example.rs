@@ -5,7 +5,9 @@ use fusions::ai::graph_flow::{
   Context, ExecutionStatus, FlowRunner, GraphBuilder, GraphError, GraphStorage, InMemoryGraphStorage,
   InMemorySessionStorage, NextAction, Session, SessionStorage, Task, TaskResult,
 };
-use rig::{client::CompletionClient, completion::Chat};
+use fusions::ai::providers::openai_compatible::completion::CompletionRequest;
+use fusions::ai::providers::openai_compatible::types as core_types;
+use fusions::ai::providers::openai_compatible::completion::CompletionModel;
 use serde::Deserialize;
 use tracing::{Level, info};
 
@@ -24,12 +26,24 @@ ANALYZE THE USER INPUT AND RESPOND **ONLY** WITH ONE OF THE FOLLOWING JSON OBJEC
 If you are not sure, ask a short clarifying question **instead** of returning JSON. Do not add any additional text around the JSON.
 "#;
 
-/// Very small wrapper around `rig` to obtain an agent that can answer our prompt.
-fn get_llm_agent() -> anyhow::Result<rig::agent::Agent<rig::providers::deepseek::CompletionModel>> {
+/// DeepSeek Chat Completions 模型 + preamble 注入。
+fn get_chat_model() -> anyhow::Result<CompletionModel> {
   let api_key = std::env::var("DEEPSEEK_API_KEY").map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-  let client = rig::providers::deepseek::Client::new(&api_key)?;
+  let client =
+    fusions::ai::providers::openai_compatible::Client::builder(&api_key).base_url("https://api.deepseek.com").build();
 
-  Ok(client.agent("deepseek-v4-flash").preamble(SENTIMENT_PROMPT).build())
+  Ok(client.chat_completions_model("deepseek-v4-flash"))
+}
+
+/// 单轮 chat：history + prompt → 补全文本（等价原 rig agent.chat 的语义）。
+async fn chat_once(model: &CompletionModel, prompt: &str, history: Vec<core_types::Message>) -> anyhow::Result<String> {
+  let mut full_history = history;
+  full_history.push(core_types::Message::user(prompt.to_string()));
+  let request =
+    CompletionRequest::from_history(model.model(), Some(SENTIMENT_PROMPT.to_string()), full_history, vec![], None, None, None, None)
+      .map_err(|e| anyhow::anyhow!("build request failed: {e}"))?;
+  let response = model.completion(request).await.map_err(|e| anyhow::anyhow!("LLM chat failed: {e}"))?;
+  Ok(response.text().unwrap_or_default())
 }
 
 // --- Task A: run sentiment analysis ---------------------------------------------------------
@@ -41,21 +55,19 @@ impl Task for SentimentAnalysisTask {
     // Pull the user input we stored in the session context
     let user_input: String = context.get_sync("user_input").unwrap_or_default();
 
-    // Build the LLM agent
-    let agent = match get_llm_agent() {
-      Ok(a) => a,
+    // Build the LLM model
+    let model = match get_chat_model() {
+      Ok(m) => m,
       Err(e) => {
-        // If the agent cannot be created (for example, the API key is missing) we fall back
+        // If the model cannot be created (for example, the API key is missing) we fall back
         // to a dummy implementation so that this example can still be executed without an LLM.
         info!(error = %e, "Falling back to dummy sentiment detection (LLM not available)");
         return self.dummy_sentiment(context, user_input).await;
       }
     };
 
-    // The current chat history from `context.get_rig_messages` is empty.
-    let mut chat_history = context.get_rig_messages().await;
-    let response = agent
-      .chat(&user_input, &mut chat_history)
+    let chat_history = context.get_messages().await;
+    let response = chat_once(&model, &user_input, chat_history)
       .await
       .map_err(|e| GraphError::TaskExecutionFailed(e.to_string()))?;
 
