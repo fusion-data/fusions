@@ -118,6 +118,29 @@ impl FunAsrRealtime {
     self.region.websocket_endpoint().to_string()
   }
 
+  /// 一等 STT 构造路径：不借道 chat 侧的 `LlmProviderConfig`。
+  ///
+  /// api_key 非空在此校验（错误只报字段名，**MUST NOT** 回显值）；model 空 / 纯空白按
+  /// 「未设置」回退 [`DEFAULT_REALTIME_ASR_MODEL`]。地域 × 模型族的 fail-closed 校验仍由
+  /// 调用方在建连前用 [`validate_model_for_region`] 完成——与 [`Self::with_model`] 口径
+  /// 一致（构造期不校验模型合法性）。
+  pub fn from_parts(
+    api_key: Option<&str>,
+    workspace_id: Option<String>,
+    region: DashScopeRegion,
+    model: Option<String>,
+  ) -> Result<Self, SpeechToTextError> {
+    let api_key = match api_key {
+      Some(k) if !k.is_empty() => k.to_string(),
+      _ => return Err(SpeechToTextError::ConfigInvalid("api_key required".to_string())),
+    };
+    let mut client = Self::new(DashScopeCredentials { api_key, workspace_id }, region);
+    if let Some(model) = model.filter(|m| !m.trim().is_empty()) {
+      client.model = model;
+    }
+    Ok(client)
+  }
+
   /// 覆盖模型名。
   ///
   /// **此处不校验**:地域 × 模型族的 fail-closed 校验发生在 `transcribe_realtime` 建连之前
@@ -1028,6 +1051,44 @@ mod tests {
 
   fn run_task_wire(config: &AudioStreamConfig) -> String {
     serde_json::to_string(&build_run_task("task-1", DEFAULT_REALTIME_ASR_MODEL.to_string(), config, "pcm")).unwrap()
+  }
+
+  // ---- 一等构造 ----
+
+  #[test]
+  fn from_parts_rejects_missing_or_empty_api_key_without_echoing_it() {
+    for bad in [None, Some("")] {
+      let err = FunAsrRealtime::from_parts(bad, None, DashScopeRegion::Beijing, None).unwrap_err();
+      match err {
+        SpeechToTextError::ConfigInvalid(message) => {
+          assert!(message.contains("api_key"), "{message}");
+          assert!(!message.contains("sk-"), "错误消息 MUST NOT 回显 key: {message}");
+        }
+        other => panic!("expected ConfigInvalid, got {other}"),
+      }
+    }
+  }
+
+  #[test]
+  fn from_parts_falls_back_to_the_default_model_on_absent_or_blank() {
+    for blank in [None, Some(String::new()), Some("  ".to_string())] {
+      let client = FunAsrRealtime::from_parts(Some("k"), None, DashScopeRegion::Beijing, blank).unwrap();
+      assert_eq!(client.model(), DEFAULT_REALTIME_ASR_MODEL);
+    }
+  }
+
+  #[test]
+  fn from_parts_passes_through_region_workspace_and_model() {
+    let client = FunAsrRealtime::from_parts(
+      Some("k"),
+      Some("ws-1".into()),
+      DashScopeRegion::Singapore,
+      Some("fun-asr-realtime-v2".into()),
+    )
+    .unwrap();
+    assert_eq!(client.region(), DashScopeRegion::Singapore);
+    assert_eq!(client.model(), "fun-asr-realtime-v2");
+    assert_eq!(client.credentials.workspace_id.as_deref(), Some("ws-1"));
   }
 
   // ---- 协议解析 ----

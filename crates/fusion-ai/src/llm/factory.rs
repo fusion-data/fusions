@@ -15,7 +15,7 @@ use super::providers::{
   AnthropicChatProvider, DeepSeekChatProvider, GeminiChatProvider, OpenAiChatProvider, QwenChatProvider,
 };
 use super::{LlmChatProvider, LlmError, LlmProviderId, SharedLlmChatProvider};
-use crate::providers::dashscope::DashScopeRegion;
+use crate::providers::dashscope::{DashScopeRegion, parse_dashscope_region};
 
 /// Provider 配置 enum —— 上层 ai_route 层从 `provider_credentials.config_json`
 /// 解出 vendor 字段后填进对应 variant。
@@ -93,6 +93,93 @@ impl LlmProviderConfig {
       // dashscope 走 region 判断，不在此处暴露
       _ => None,
     }
+  }
+}
+
+/// `from_parts` 家族共用：api_key 非空校验。错误只报字段名，**MUST NOT** 回显值——
+/// `LlmError` 的 Display 会进入调用方日志。
+fn required_api_key(id: LlmProviderId, api_key: Option<&str>) -> Result<String, LlmError> {
+  match api_key {
+    Some(k) if !k.is_empty() => Ok(k.to_string()),
+    _ => Err(LlmError::ConfigInvalid(id, "api_key required".to_string())),
+  }
+}
+
+/// `from_parts` 家族共用：`default_chat_model` 空串过滤。空 / 纯空白按「未设置」处理、
+/// 回退 provider 默认模型——空模型名从来不是合法配置，在这里失败早于 wire 层且可归因。
+fn sanitize_default_model(raw: Option<String>, fallback: &'static str) -> String {
+  raw.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| fallback.to_string())
+}
+
+/// 中性参数构造 API（`from_parts` 家族）。
+///
+/// 调用方（上层 bin）只做 proto → 参数的薄映射；region 别名归一 / api_key 非空校验 /
+/// 默认模型表回退全部收在这里。**不改 enum variant 形状**——这只是构造路径的收敛，
+/// 既有按字段 match 的消费方（驻留判定等）不受影响。
+impl LlmProviderConfig {
+  /// Qwen(DashScope)。`region` 收原始别名串，归一见 [`parse_dashscope_region`]。
+  /// `base_url_override` 仅承载部署形态注入（如集成测试对本地假服务端），凭证数据
+  /// MUST NOT 填入——让被驻留判定方自报判据等于让驻留档形同虚设。
+  pub fn qwen_from_parts(
+    api_key: Option<&str>,
+    workspace_id: Option<String>,
+    region: Option<&str>,
+    default_chat_model: Option<String>,
+    timeout: Option<Duration>,
+    base_url_override: Option<String>,
+  ) -> Result<Self, LlmError> {
+    Ok(Self::Qwen {
+      api_key: required_api_key(LlmProviderId::Qwen, api_key)?,
+      workspace_id,
+      region: parse_dashscope_region(region),
+      default_chat_model: sanitize_default_model(default_chat_model, DEFAULT_MODEL_QWEN),
+      timeout,
+      base_url_override,
+    })
+  }
+
+  pub fn deepseek_from_parts(
+    api_key: Option<&str>,
+    endpoint: Option<String>,
+    default_chat_model: Option<String>,
+    timeout: Option<Duration>,
+  ) -> Result<Self, LlmError> {
+    Ok(Self::DeepSeek {
+      api_key: required_api_key(LlmProviderId::DeepSeek, api_key)?,
+      endpoint,
+      default_chat_model: sanitize_default_model(default_chat_model, DEFAULT_MODEL_DEEPSEEK),
+      timeout,
+    })
+  }
+
+  pub fn openai_from_parts(
+    api_key: Option<&str>,
+    organization: Option<String>,
+    endpoint: Option<String>,
+    default_chat_model: Option<String>,
+    timeout: Option<Duration>,
+  ) -> Result<Self, LlmError> {
+    Ok(Self::OpenAi {
+      api_key: required_api_key(LlmProviderId::OpenAi, api_key)?,
+      organization,
+      endpoint,
+      default_chat_model: sanitize_default_model(default_chat_model, DEFAULT_MODEL_OPENAI),
+      timeout,
+    })
+  }
+
+  pub fn anthropic_from_parts(api_key: Option<&str>, default_chat_model: Option<String>) -> Result<Self, LlmError> {
+    Ok(Self::Anthropic {
+      api_key: required_api_key(LlmProviderId::Anthropic, api_key)?,
+      default_chat_model: sanitize_default_model(default_chat_model, DEFAULT_MODEL_ANTHROPIC),
+    })
+  }
+
+  pub fn gemini_from_parts(api_key: Option<&str>, default_chat_model: Option<String>) -> Result<Self, LlmError> {
+    Ok(Self::Gemini {
+      api_key: required_api_key(LlmProviderId::Gemini, api_key)?,
+      default_chat_model: sanitize_default_model(default_chat_model, DEFAULT_MODEL_GEMINI),
+    })
   }
 }
 
@@ -203,5 +290,80 @@ mod tests {
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::Qwen), "qwen3.7-plus");
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::DeepSeek), "deepseek-v4-flash");
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::OpenAi), "gpt-4o-mini");
+  }
+
+  #[test]
+  fn from_parts_builds_each_variant() {
+    assert!(matches!(
+      LlmProviderConfig::qwen_from_parts(Some("sk"), None, None, None, None, None).unwrap(),
+      LlmProviderConfig::Qwen { .. }
+    ));
+    assert!(matches!(
+      LlmProviderConfig::deepseek_from_parts(Some("sk"), None, None, None).unwrap(),
+      LlmProviderConfig::DeepSeek { .. }
+    ));
+    assert!(matches!(
+      LlmProviderConfig::openai_from_parts(Some("sk"), None, None, None, None).unwrap(),
+      LlmProviderConfig::OpenAi { .. }
+    ));
+    assert!(matches!(
+      LlmProviderConfig::anthropic_from_parts(Some("sk"), None).unwrap(),
+      LlmProviderConfig::Anthropic { .. }
+    ));
+    assert!(matches!(
+      LlmProviderConfig::gemini_from_parts(Some("sk"), None).unwrap(),
+      LlmProviderConfig::Gemini { .. }
+    ));
+  }
+
+  #[test]
+  fn from_parts_rejects_missing_or_empty_api_key_without_echoing_it() {
+    // 与调用方既有口径一致：None / 空串拒绝；不做 trim（whitespace key 的拒绝不是本收敛
+    // 裁决的一部分，留给 vendor 端点报错）。
+    for bad in [None, Some("")] {
+      // `LlmProviderConfig` 刻意无 Debug（持有明文 key），断言走 match 而非 unwrap_err。
+      match LlmProviderConfig::deepseek_from_parts(bad, None, None, None) {
+        Err(LlmError::ConfigInvalid(id, message)) => {
+          assert_eq!(id, LlmProviderId::DeepSeek);
+          assert!(message.contains("api_key"), "{message}");
+          assert!(!message.contains("sk-"), "错误消息 MUST NOT 回显 key: {message}");
+        }
+        Err(other) => panic!("expected ConfigInvalid, got {other}"),
+        Ok(_) => panic!("expected an error for a missing api_key"),
+      }
+    }
+  }
+
+  /// 行为变化点的锚点：空串 / 纯空白 default_chat_model 按「未设置」处理、回退默认表。
+  #[test]
+  fn from_parts_filters_blank_default_chat_model_to_the_provider_default() {
+    for blank in [None, Some(String::new()), Some("   ".to_string())] {
+      let cfg = LlmProviderConfig::qwen_from_parts(Some("sk"), None, None, blank, None, None).unwrap();
+      match cfg {
+        LlmProviderConfig::Qwen { default_chat_model, .. } => {
+          assert_eq!(default_chat_model, DEFAULT_MODEL_QWEN, "blank model must fall back to the default");
+        }
+        _ => panic!("expected the Qwen variant"),
+      }
+    }
+    let cfg =
+      LlmProviderConfig::deepseek_from_parts(Some("sk"), None, Some("deepseek-reasoner".into()), None).unwrap();
+    match cfg {
+      LlmProviderConfig::DeepSeek { default_chat_model, .. } => assert_eq!(default_chat_model, "deepseek-reasoner"),
+      _ => panic!("expected the DeepSeek variant"),
+    }
+  }
+
+  #[test]
+  fn from_parts_normalizes_dashscope_region_aliases() {
+    let region_of = |raw: Option<&str>| match LlmProviderConfig::qwen_from_parts(Some("sk"), None, raw, None, None, None) {
+      Ok(LlmProviderConfig::Qwen { region, .. }) => region,
+      Ok(_) => panic!("expected the Qwen variant"),
+      Err(e) => panic!("unexpected error: {e}"),
+    };
+    assert_eq!(region_of(None), DashScopeRegion::Beijing);
+    assert_eq!(region_of(Some("garbage")), DashScopeRegion::Beijing);
+    assert_eq!(region_of(Some("Singapore")), DashScopeRegion::Singapore);
+    assert_eq!(region_of(Some("intl")), DashScopeRegion::Singapore);
   }
 }
