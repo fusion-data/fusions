@@ -19,7 +19,7 @@ use tracing::{Instrument, info_span};
 use crate::json_utils;
 use crate::providers::openai_compatible::errors::OpenAiCompatError;
 use crate::providers::openai_compatible::types as core;
-use crate::providers::openai_compatible::types::{DocumentSourceKind, DocumentMediaType, OneOrMany};
+use crate::providers::openai_compatible::types::{DocumentMediaType, DocumentSourceKind, OneOrMany};
 
 use super::completion::ToolChoice;
 use super::types::{ImageDetail, Text};
@@ -195,11 +195,7 @@ pub fn try_from_message_to_vec_input_item(value: core::Message) -> Result<Vec<In
               }),
             });
           }
-          core::UserContent::ToolResult(core::ToolResult {
-            id,
-            call_id,
-            content: tool_content,
-          }) => {
+          core::UserContent::ToolResult(core::ToolResult { id, call_id, content: tool_content }) => {
             let fallback_call_id = id;
             for tool_result_content in tool_content {
               let core::ToolResultContent::Text(Text { text, .. }) = tool_result_content else {
@@ -307,9 +303,7 @@ pub fn try_from_message_to_vec_input_item(value: core::Message) -> Result<Vec<In
               }),
             });
           }
-          core::AssistantContent::ToolCall(core::ToolCall {
-            id: tool_id, call_id, function, ..
-          }) => {
+          core::AssistantContent::ToolCall(core::ToolCall { id: tool_id, call_id, function, .. }) => {
             items.push(InputItem {
               role: None,
               input: InputContent::FunctionCall(OutputFunctionCall {
@@ -323,9 +317,7 @@ pub fn try_from_message_to_vec_input_item(value: core::Message) -> Result<Vec<In
           }
           core::AssistantContent::Reasoning(core::Reasoning { id, content, .. }) => {
             let id = id.ok_or_else(|| {
-              OpenAiCompatError::request_build(
-                "An OpenAI-generated ID is required when using OpenAI reasoning items",
-              )
+              OpenAiCompatError::request_build("An OpenAI-generated ID is required when using OpenAI reasoning items")
             })?;
             items.push(InputItem {
               role: None,
@@ -854,9 +846,7 @@ pub enum Output {
 impl From<Output> for Vec<core::AssistantContent> {
   fn from(value: Output) -> Self {
     match value {
-      Output::Message(OutputMessage { content, .. }) => {
-        content.into_iter().map(core::AssistantContent::from).collect()
-      }
+      Output::Message(OutputMessage { content, .. }) => content.into_iter().map(core::AssistantContent::from).collect(),
       Output::FunctionCall(OutputFunctionCall { id, arguments, call_id, name, .. }) => {
         vec![core::AssistantContent::ToolCall(
           core::ToolCall::new(id, core::ToolFunction { name, arguments }).with_call_id(call_id),
@@ -865,12 +855,10 @@ impl From<Output> for Vec<core::AssistantContent> {
       Output::Reasoning { id, summary } => {
         let summary: Vec<String> = summary.into_iter().map(|x| x.text()).collect();
 
-        vec![core::AssistantContent::Reasoning(
-          core::Reasoning {
-            id: Some(id),
-            content: vec![core::ReasoningContent::Summary(summary.join("\n"))],
-          },
-        )]
+        vec![core::AssistantContent::Reasoning(core::Reasoning {
+          id: Some(id),
+          content: vec![core::ReasoningContent::Summary(summary.join("\n"))],
+        })]
       }
     }
   }
@@ -976,7 +964,6 @@ impl ResponsesCompletionModel {
     .instrument(span)
     .await
   }
-
 }
 
 impl CompletionResponse {
@@ -1021,14 +1008,15 @@ impl CompletionResponse {
       .collect()
   }
 
-  /// 通用 token 用量（provider 无关形态）。
+  /// 通用 token 用量（provider 无关形态）。cache 命中取 `input_tokens_details.cached_tokens`
+  ///（Qwen Responses 方言原生字段，wire 已解析、此处透传不再丢弃）。
   pub fn usage_tokens(&self) -> core::Usage {
     match &self.usage {
       Some(usage) => core::Usage {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         total_tokens: usage.total_tokens,
-        cached_input_tokens: 0,
+        cached_input_tokens: usage.input_tokens_details.as_ref().map(|d| d.cached_tokens).unwrap_or(0),
         cache_creation_input_tokens: 0,
       },
       None => core::Usage::default(),

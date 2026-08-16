@@ -13,10 +13,13 @@ use std::pin::Pin;
 use tracing::info_span;
 use tracing_futures::Instrument as _;
 
+use crate::providers::openai_compatible::Client;
 use crate::providers::openai_compatible::completion::streaming::ToolCallDeltaContent;
 use crate::providers::openai_compatible::errors::OpenAiCompatError;
-use crate::providers::openai_compatible::responses_api::{CompletionRequest, ReasoningSummary, ResponsesCompletionModel};
-use crate::providers::openai_compatible::Client;
+use crate::providers::openai_compatible::responses_api::{
+  CompletionRequest, ReasoningSummary, ResponsesCompletionModel,
+};
+use crate::providers::openai_compatible::types as core;
 
 use super::{CompletionResponse, Output};
 
@@ -31,24 +34,26 @@ pub struct StreamingCompletionResponse {
   pub usage: super::ResponsesUsage,
 }
 
+impl StreamingCompletionResponse {
+  /// 通用 token 用量（provider 无关形态；cache 命中取 `input_tokens_details.cached_tokens`）。
+  pub fn usage_tokens(&self) -> core::Usage {
+    core::Usage {
+      input_tokens: self.usage.input_tokens,
+      output_tokens: self.usage.output_tokens,
+      total_tokens: self.usage.total_tokens,
+      cached_input_tokens: self.usage.input_tokens_details.as_ref().map(|d| d.cached_tokens).unwrap_or(0),
+      cache_creation_input_tokens: 0,
+    }
+  }
+}
+
 /// Responses 流事件（统一流事件枚举，Final 携带终态）。
 #[derive(Debug, Clone)]
 pub enum StreamingChoice {
   Text(String),
-  ToolCall {
-    id: String,
-    call_id: Option<String>,
-    name: String,
-    arguments: serde_json::Value,
-  },
-  ToolCallDelta {
-    id: String,
-    content: ToolCallDeltaContent,
-  },
-  Reasoning {
-    id: Option<String>,
-    content: String,
-  },
+  ToolCall { id: String, call_id: Option<String>, name: String, arguments: serde_json::Value },
+  ToolCallDelta { id: String, content: ToolCallDeltaContent },
+  Reasoning { id: Option<String>, content: String },
   Final(StreamingCompletionResponse),
 }
 
@@ -60,10 +65,7 @@ pub struct ResponsesStream {
 impl Stream for ResponsesStream {
   type Item = Result<StreamingChoice, OpenAiCompatError>;
 
-  fn poll_next(
-    self: Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<Option<Self::Item>> {
+  fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
     Pin::new(&mut self.get_mut().inner).poll_next(cx)
   }
 }
@@ -231,10 +233,7 @@ pub enum SummaryPartChunkPart {
 
 impl ResponsesCompletionModel {
   /// 流式 Responses 调用（`stream` 参数由实现注入）。
-  pub async fn stream(
-    &self,
-    request: CompletionRequest,
-  ) -> Result<ResponsesStream, OpenAiCompatError> {
+  pub async fn stream(&self, request: CompletionRequest) -> Result<ResponsesStream, OpenAiCompatError> {
     stream_responses(&self.client, request).await
   }
 }

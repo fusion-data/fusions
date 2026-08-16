@@ -9,14 +9,16 @@ mod fixture_common;
 use fixture_common::{API_KEY, request_body, responses_request, sse_body};
 use futures::StreamExt;
 use serde_json::json;
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use fusion_ai::providers::openai_compatible::Client;
 use fusion_ai::providers::openai_compatible::errors::OpenAiCompatError;
 use fusion_ai::providers::openai_compatible::responses_api::streaming::StreamingChoice;
-use fusion_ai::providers::openai_compatible::responses_api::{CompletionResponse, Output, OutputMessage, ResponseStatus, ResponsesUsage};
+use fusion_ai::providers::openai_compatible::responses_api::{
+  CompletionResponse, Output, OutputMessage, ResponseStatus, ResponsesUsage,
+};
 use fusion_ai::providers::openai_compatible::types as core;
-use fusion_ai::providers::openai_compatible::Client;
 
 /// 构造指向 mock server 的 Responses 模型（`completion_model` 默认即 Responses 形态）。
 async fn responses_model(
@@ -114,6 +116,7 @@ async fn openai_responses_request_shape_and_non_streaming_parse() {
   // 便捷访问器
   assert_eq!(response.text().as_deref(), Some("Hello! How can I help?"));
   assert_eq!(response.usage_tokens().total_tokens, 43);
+  assert_eq!(response.usage_tokens().cached_input_tokens, 8, "cached tokens must surface via usage_tokens()");
 }
 
 // ================================================================
@@ -186,7 +189,8 @@ async fn deepseek_responses_streaming_terminated_by_completed_event() {
     .mount(&server)
     .await;
 
-  let request = responses_request("deepseek-chat", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
+  let request =
+    responses_request("deepseek-chat", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
   let model = responses_model(&server, "deepseek-chat").await;
   let mut stream = model.stream(request).await.expect("stream starts");
 
@@ -210,6 +214,39 @@ async fn deepseek_responses_streaming_terminated_by_completed_event() {
 }
 
 // ================================================================
+// 流式终态 cached_tokens 透传（t047：Qwen Responses 隐式缓存）
+// ================================================================
+
+#[tokio::test]
+async fn responses_streaming_final_usage_carries_cached_tokens() {
+  let server = MockServer::start().await;
+  let sse = sse_body(&[
+    r#"{"type":"response.output_text.delta","item_id":"msg_q2","output_index":0,"content_index":0,"sequence_number":4,"delta":"你好"}"#,
+    r#"{"type":"response.completed","sequence_number":9,"response":{"id":"resp_qwen_cache","object":"response","created_at":1723600010,"status":"completed","error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"qwen3.7-plus","usage":{"input_tokens":700,"input_tokens_details":{"cached_tokens":560},"output_tokens":30,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":730},"output":[{"type":"message","id":"msg_q2","role":"assistant","status":"completed","content":[{"type":"output_text","text":"你好"}]}],"tools":[]}}"#,
+  ]);
+  Mock::given(method("POST"))
+    .and(path("/responses"))
+    .respond_with(ResponseTemplate::new(200).set_body_raw(sse.into_bytes(), "text/event-stream"))
+    .expect(1)
+    .mount(&server)
+    .await;
+
+  let request =
+    responses_request("qwen3.7-plus", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
+  let model = responses_model(&server, "qwen3.7-plus").await;
+  let mut stream = model.stream(request).await.expect("stream starts");
+
+  let mut final_cached: Option<(u64, u64)> = None;
+  while let Some(choice) = stream.next().await {
+    if let StreamingChoice::Final(final_response) = choice.expect("chunk ok") {
+      let usage = final_response.usage_tokens();
+      final_cached = Some((usage.input_tokens, usage.cached_input_tokens));
+    }
+  }
+  assert_eq!(final_cached.expect("final usage"), (700, 560), "streaming final usage carries cached tokens");
+}
+
+// ================================================================
 // 流式 reasoning 事件 + 工具调用终态（OpenAI Responses 方言）
 // ================================================================
 
@@ -228,7 +265,8 @@ async fn openai_responses_streaming_reasoning_and_tool_call() {
     .mount(&server)
     .await;
 
-  let request = responses_request("gpt-4o", None, vec![core::Message::user("Weather in Paris?")], vec![], None, None, None, None);
+  let request =
+    responses_request("gpt-4o", None, vec![core::Message::user("Weather in Paris?")], vec![], None, None, None, None);
   let model = responses_model(&server, "gpt-4o").await;
   let mut stream = model.stream(request).await.expect("stream starts");
 
@@ -352,7 +390,8 @@ async fn responses_max_tokens_maps_to_max_output_tokens() {
     .mount(&server)
     .await;
 
-  let request = responses_request("qwen-max", None, vec![core::Message::user("Hi")], vec![], None, None, Some(4096), None);
+  let request =
+    responses_request("qwen-max", None, vec![core::Message::user("Hi")], vec![], None, None, Some(4096), None);
   let model = responses_model(&server, "qwen-max").await;
   model.completion(request).await.expect("completion succeeds");
 

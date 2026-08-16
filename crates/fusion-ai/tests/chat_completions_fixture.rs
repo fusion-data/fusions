@@ -9,8 +9,8 @@ mod fixture_common;
 use fixture_common::{API_KEY, chat_request, request_body, sse_body};
 use futures::StreamExt;
 use serde_json::json;
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use fusion_ai::providers::openai_compatible::completion::streaming::{StreamingChoice, ToolCallDeltaContent};
 use fusion_ai::providers::openai_compatible::errors::OpenAiCompatError;
@@ -340,4 +340,119 @@ fn client_debug_never_leaks_api_key() {
   let dbg = format!("{client:?}");
   assert!(!dbg.contains(API_KEY), "api_key leaked: {dbg}");
   assert!(dbg.contains("REDACTED"));
+}
+
+// ================================================================
+// cache 命中 usage 双方言解析（t047：DeepSeek flat / OpenAI 嵌套）
+// ================================================================
+
+#[tokio::test]
+async fn deepseek_non_streaming_flat_cache_hit_tokens() {
+  let server = MockServer::start().await;
+  Mock::given(method("POST"))
+    .and(path("/chat/completions"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+        "id": "chatcmpl-ds-cache", "object": "chat.completion", "created": 1723600010, "model": "deepseek-chat",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {
+            "prompt_tokens": 1000,
+            "completion_tokens": 50,
+            "total_tokens": 1050,
+            "prompt_cache_hit_tokens": 800,
+            "prompt_cache_miss_tokens": 200
+        }
+    })))
+    .expect(1)
+    .mount(&server)
+    .await;
+
+  let request = chat_request("deepseek-chat", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
+  let model = chat_model(&server, "deepseek-chat").await;
+  let response = model.completion(request).await.expect("completion succeeds");
+
+  let usage = response.usage_tokens();
+  assert_eq!(usage.input_tokens, 1000);
+  assert_eq!(usage.output_tokens, 50);
+  assert_eq!(usage.cached_input_tokens, 800, "flat dialect prompt_cache_hit_tokens must surface");
+}
+
+#[tokio::test]
+async fn openai_non_streaming_nested_cached_tokens() {
+  let server = MockServer::start().await;
+  Mock::given(method("POST"))
+    .and(path("/chat/completions"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+        "id": "chatcmpl-oai-cache", "object": "chat.completion", "created": 1723600011, "model": "gpt-4o",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {
+            "prompt_tokens": 900,
+            "completion_tokens": 40,
+            "total_tokens": 940,
+            "prompt_tokens_details": {"cached_tokens": 600}
+        }
+    })))
+    .expect(1)
+    .mount(&server)
+    .await;
+
+  let request = chat_request("gpt-4o", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
+  let model = chat_model(&server, "gpt-4o").await;
+  let response = model.completion(request).await.expect("completion succeeds");
+
+  let usage = response.usage_tokens();
+  assert_eq!(usage.input_tokens, 900);
+  assert_eq!(usage.cached_input_tokens, 600, "nested dialect prompt_tokens_details.cached_tokens must surface");
+}
+
+#[tokio::test]
+async fn non_streaming_usage_without_cache_fields_degrades_to_zero() {
+  let server = MockServer::start().await;
+  Mock::given(method("POST"))
+    .and(path("/chat/completions"))
+    .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+        "id": "chatcmpl-nocache", "object": "chat.completion", "created": 1723600012, "model": "moonshot-v1-8k",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
+    })))
+    .expect(1)
+    .mount(&server)
+    .await;
+
+  let request = chat_request("moonshot-v1-8k", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
+  let model = chat_model(&server, "moonshot-v1-8k").await;
+  let response = model.completion(request).await.expect("completion succeeds");
+
+  assert_eq!(
+    response.usage_tokens().cached_input_tokens,
+    0,
+    "unknown dialect degrades to 0 (no worse than status quo)"
+  );
+}
+
+#[tokio::test]
+async fn deepseek_streaming_final_usage_carries_cache_hit_tokens() {
+  let server = MockServer::start().await;
+  let sse = sse_body(&[
+    r#"{"id":"chatcmpl-ds-cache-s","object":"chat.completion.chunk","created":1723600013,"model":"deepseek-chat","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}"#,
+    r#"{"id":"chatcmpl-ds-cache-s","object":"chat.completion.chunk","created":1723600013,"model":"deepseek-chat","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":500,"completion_tokens":20,"total_tokens":520,"prompt_cache_hit_tokens":400}}"#,
+    "[DONE]",
+  ]);
+  Mock::given(method("POST"))
+    .and(path("/chat/completions"))
+    .respond_with(ResponseTemplate::new(200).set_body_raw(sse.into_bytes(), "text/event-stream"))
+    .expect(1)
+    .mount(&server)
+    .await;
+
+  let request = chat_request("deepseek-chat", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
+  let model = chat_model(&server, "deepseek-chat").await;
+  let mut stream = model.stream(request).await.expect("stream starts");
+
+  let mut final_cached: Option<u64> = None;
+  while let Some(choice) = stream.next().await {
+    if let StreamingChoice::Final(final_response) = choice.expect("chunk ok") {
+      final_cached = Some(final_response.usage_tokens().cached_input_tokens);
+    }
+  }
+  assert_eq!(final_cached.expect("final usage"), 400, "streaming final usage carries cache hit tokens");
 }

@@ -237,9 +237,7 @@ impl TryFrom<core::ToolChoice> for ToolChoice {
   fn try_from(value: core::ToolChoice) -> Result<Self, Self::Error> {
     let res = match value {
       core::ToolChoice::Specific { .. } => {
-        return Err(OpenAiCompatError::request_build(
-          "Provider doesn't support only using specific tools",
-        ));
+        return Err(OpenAiCompatError::request_build("Provider doesn't support only using specific tools"));
       }
       core::ToolChoice::Auto => Self::Auto,
       core::ToolChoice::None => Self::None,
@@ -305,9 +303,9 @@ pub fn try_from_message_to_vec_input_item(message: core::Message) -> Result<Vec<
           .map(|content| match content {
             core::UserContent::Text(text) => Ok(UserContent::Text { text: text.text }),
             core::UserContent::Image(core::Image { data, detail, media_type, .. }) => match data {
-              DocumentSourceKind::Url(url) => Ok(UserContent::Image {
-                image_url: ImageUrl { url, detail: detail.unwrap_or_default() },
-              }),
+              DocumentSourceKind::Url(url) => {
+                Ok(UserContent::Image { image_url: ImageUrl { url, detail: detail.unwrap_or_default() } })
+              }
               DocumentSourceKind::Base64(data) => {
                 let url = format!(
                   "data:{};base64,{}",
@@ -317,8 +315,8 @@ pub fn try_from_message_to_vec_input_item(message: core::Message) -> Result<Vec<
                   data
                 );
 
-                let detail = detail
-                  .ok_or_else(|| core::MessageError::conversion("OpenAI image URI must have image detail"))?;
+                let detail =
+                  detail.ok_or_else(|| core::MessageError::conversion("OpenAI image URI must have image detail"))?;
 
                 Ok(UserContent::Image { image_url: ImageUrl { url, detail } })
               }
@@ -336,17 +334,17 @@ pub fn try_from_message_to_vec_input_item(message: core::Message) -> Result<Vec<
                 Err(core::MessageError::conversion("Documents must be base64 or a string"))
               }
             }
-            core::UserContent::Audio(core::Audio {
-              data: DocumentSourceKind::Base64(data), media_type, ..
-            }) => Ok(UserContent::Audio {
-              input_audio: InputAudio {
-                data,
-                format: match media_type {
-                  Some(media_type) => media_type,
-                  None => core::AudioMediaType::MP3,
+            core::UserContent::Audio(core::Audio { data: DocumentSourceKind::Base64(data), media_type, .. }) => {
+              Ok(UserContent::Audio {
+                input_audio: InputAudio {
+                  data,
+                  format: match media_type {
+                    Some(media_type) => media_type,
+                    None => core::AudioMediaType::MP3,
+                  },
                 },
-              },
-            }),
+              })
+            }
             _ => Err(core::MessageError::conversion("Tool result is in unsupported format")),
           })
           .collect::<Result<Vec<_>, _>>()?;
@@ -368,14 +366,10 @@ pub fn try_from_message_to_vec_input_item(message: core::Message) -> Result<Vec<
             core::AssistantContent::Text(text) => texts.push(text),
             core::AssistantContent::ToolCall(tool_call) => tools.push(tool_call),
             core::AssistantContent::Reasoning(_) => {
-              return Err(core::MessageError::conversion(
-                "OpenAI Completions API does not support reasoning content",
-              ));
+              return Err(core::MessageError::conversion("OpenAI Completions API does not support reasoning content"));
             }
             core::AssistantContent::Image(_) => {
-              return Err(core::MessageError::conversion(
-                "OpenAI Completions API does not support image content",
-              ));
+              return Err(core::MessageError::conversion("OpenAI Completions API does not support image content"));
             }
           }
           Ok((texts, tools))
@@ -399,10 +393,7 @@ impl From<core::ToolCall> for ToolCall {
     Self {
       id: tool_call.id,
       r#type: ToolType::default(),
-      function: Function {
-        name: tool_call.function.name,
-        arguments: tool_call.function.arguments,
-      },
+      function: Function { name: tool_call.function.name, arguments: tool_call.function.arguments },
       signature: tool_call.signature,
       additional_params: tool_call.additional_params,
     }
@@ -500,9 +491,7 @@ impl From<UserContent> for core::UserContent {
   fn from(content: UserContent) -> Self {
     match content {
       UserContent::Text { text } => core::UserContent::text(text),
-      UserContent::Image { image_url } => {
-        core::UserContent::image_url(image_url.url, None, Some(image_url.detail))
-      }
+      UserContent::Image { image_url } => core::UserContent::image_url(image_url.url, None, Some(image_url.detail)),
       UserContent::Audio { input_audio } => core::UserContent::audio(input_audio.data, Some(input_audio.format)),
     }
   }
@@ -602,11 +591,18 @@ impl CompletionResponse {
         input_tokens: usage.prompt_tokens as u64,
         output_tokens: usage.total_tokens.saturating_sub(usage.prompt_tokens) as u64,
         total_tokens: usage.total_tokens as u64,
-        cached_input_tokens: 0,
+        cached_input_tokens: usage.cached_input_tokens(),
         cache_creation_input_tokens: 0,
       },
       None => core::Usage::default(),
     }
+  }
+}
+
+impl fmt::Display for Usage {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let Usage { prompt_tokens, completion_tokens: _, total_tokens, .. } = self;
+    write!(f, "Prompt tokens: {prompt_tokens} Total tokens: {total_tokens}")
   }
 }
 
@@ -619,6 +615,10 @@ pub struct Choice {
 }
 
 /// Chat Completions wire 用量（OpenAI 方言：prompt_tokens / completion_tokens / total_tokens）。
+///
+/// cache 命中数双方言解析（均 `#[serde(default)]`，缺省 0）：DeepSeek flat
+/// `prompt_cache_hit_tokens` + OpenAI 嵌套 `prompt_tokens_details.cached_tokens`。
+/// 厂商只回其一；同时出现取 max（防御性，避免同 token 双计）。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Usage {
   #[serde(default)]
@@ -627,24 +627,40 @@ pub struct Usage {
   pub completion_tokens: usize,
   #[serde(default)]
   pub total_tokens: usize,
+  #[serde(default)]
+  pub prompt_cache_hit_tokens: usize,
+  #[serde(default)]
+  pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 impl Usage {
   pub fn new() -> Self {
-    Self { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    Self {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      prompt_cache_hit_tokens: 0,
+      prompt_tokens_details: None,
+    }
   }
+
+  /// cache 命中 input tokens（双方言取值，皆无 → 0，退化为不拆分口径）。
+  pub fn cached_input_tokens(&self) -> u64 {
+    let nested = self.prompt_tokens_details.as_ref().map(|d| d.cached_tokens as u64).unwrap_or(0);
+    (self.prompt_cache_hit_tokens as u64).max(nested)
+  }
+}
+
+/// OpenAI 方言嵌套明细（`prompt_tokens_details`）。
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PromptTokensDetails {
+  #[serde(default)]
+  pub cached_tokens: usize,
 }
 
 impl Default for Usage {
   fn default() -> Self {
     Self::new()
-  }
-}
-
-impl fmt::Display for Usage {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    let Usage { prompt_tokens, completion_tokens: _, total_tokens } = self;
-    write!(f, "Prompt tokens: {prompt_tokens} Total tokens: {total_tokens}")
   }
 }
 
@@ -698,8 +714,7 @@ impl CompletionRequest {
     max_tokens: Option<u64>,
     additional_params: Option<serde_json::Value>,
   ) -> Result<Self, OpenAiCompatError> {
-    let mut full_history: Vec<Message> =
-      preamble.map_or_else(Vec::new, |preamble| vec![Message::system(&preamble)]);
+    let mut full_history: Vec<Message> = preamble.map_or_else(Vec::new, |preamble| vec![Message::system(&preamble)]);
 
     full_history.extend(
       history
@@ -756,8 +771,7 @@ impl CompletionModel {
       }
 
       let text = response.text().await.map_err(|e| OpenAiCompatError::Transport(e.to_string()))?;
-      let parsed: ApiResponse<CompletionResponse> =
-        serde_json::from_str(&text).map_err(OpenAiCompatError::from)?;
+      let parsed: ApiResponse<CompletionResponse> = serde_json::from_str(&text).map_err(OpenAiCompatError::from)?;
 
       match parsed {
         ApiResponse::Ok(response) => {
@@ -775,6 +789,4 @@ impl CompletionModel {
     .instrument(span)
     .await
   }
-
 }
-

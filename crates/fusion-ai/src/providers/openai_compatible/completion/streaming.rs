@@ -12,9 +12,10 @@ use tracing::info_span;
 use tracing_futures::Instrument as _;
 
 use crate::json_utils::{self, merge};
+use crate::providers::openai_compatible::Client;
 use crate::providers::openai_compatible::completion::{CompletionModel, CompletionRequest, Usage};
 use crate::providers::openai_compatible::errors::OpenAiCompatError;
-use crate::providers::openai_compatible::Client;
+use crate::providers::openai_compatible::types as core;
 
 // ================================================================
 // OpenAI Completion Streaming API
@@ -24,6 +25,19 @@ use crate::providers::openai_compatible::Client;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingCompletionResponse {
   pub usage: Usage,
+}
+
+impl StreamingCompletionResponse {
+  /// 通用 token 用量（provider 无关形态；cache 命中双方言解析见 wire `Usage`）。
+  pub fn usage_tokens(&self) -> core::Usage {
+    core::Usage {
+      input_tokens: self.usage.prompt_tokens as u64,
+      output_tokens: self.usage.total_tokens.saturating_sub(self.usage.prompt_tokens) as u64,
+      total_tokens: self.usage.total_tokens as u64,
+      cached_input_tokens: self.usage.cached_input_tokens(),
+      cache_creation_input_tokens: 0,
+    }
+  }
 }
 
 /// 流式工具调用参数分片内容。
@@ -39,16 +53,8 @@ pub enum ToolCallDeltaContent {
 #[derive(Debug, Clone)]
 pub enum StreamingChoice {
   Text(String),
-  ToolCall {
-    id: String,
-    call_id: Option<String>,
-    name: String,
-    arguments: serde_json::Value,
-  },
-  ToolCallDelta {
-    id: String,
-    content: ToolCallDeltaContent,
-  },
+  ToolCall { id: String, call_id: Option<String>, name: String, arguments: serde_json::Value },
+  ToolCallDelta { id: String, content: ToolCallDeltaContent },
   Final(StreamingCompletionResponse),
 }
 
@@ -60,10 +66,7 @@ pub struct CompletionStream {
 impl Stream for CompletionStream {
   type Item = Result<StreamingChoice, OpenAiCompatError>;
 
-  fn poll_next(
-    self: Pin<&mut Self>,
-    cx: &mut std::task::Context<'_>,
-  ) -> std::task::Poll<Option<Self::Item>> {
+  fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
     Pin::new(&mut self.get_mut().inner).poll_next(cx)
   }
 }
@@ -106,10 +109,7 @@ struct StreamingCompletionChunk {
 
 impl CompletionModel {
   /// 流式 Chat Completions 调用（`stream` + `stream_options.include_usage` 由实现注入）。
-  pub async fn stream(
-    &self,
-    request: CompletionRequest,
-  ) -> Result<CompletionStream, OpenAiCompatError> {
+  pub async fn stream(&self, request: CompletionRequest) -> Result<CompletionStream, OpenAiCompatError> {
     stream_chat_completions(&self.client, request).await
   }
 }
