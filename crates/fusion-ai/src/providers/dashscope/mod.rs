@@ -2,15 +2,18 @@
 //!
 //! 当前覆盖:
 //! - [`fun_asr::FunAsrRealtime`] —— Fun-ASR 实时流式 STT(WebSocket)
-//! - [`qwen_tts::QwenTts`] —— Qwen-TTS / qwen3-tts-flash 同步合成(HTTP)
+//! - [`qwen_tts::QwenTts`] —— Qwen-TTS 非实时合成(HTTP + SSE,PCM 流式)
+//! - [`voice_enrollment::QwenVoiceEnrollment`] —— Qwen-TTS 声音复刻(create/list/delete)
 //!
 //! 未来按需扩展 CosyVoice、Qwen-Audio、Qwen-VL 等子能力。
 
 pub mod fun_asr;
 pub mod qwen_tts;
+pub mod voice_enrollment;
 
 pub use fun_asr::FunAsrRealtime;
-pub use qwen_tts::QwenTts;
+pub use qwen_tts::{QwenTts, QwenTtsRequest};
+pub use voice_enrollment::{CreateVoiceRequest, EnrolledVoice, QwenVoiceEnrollment, VoiceList};
 
 /// 会话级测试:对着本地假 DashScope 服务端跑完整的 `transcribe_realtime` 事件循环
 /// （握手时序 / ping 容忍 / 上行泵分发 / finish-task 时序 / 空闲上限 / 提前取消）。
