@@ -87,10 +87,7 @@ impl MinimaxTts {
       group_id,
       base_url,
       model: DEFAULT_MODEL.to_string(),
-      http: reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()
-        .expect("reqwest client build"),
+      http: reqwest::Client::builder().timeout(Duration::from_secs(300)).build().expect("reqwest client build"),
     }
   }
 
@@ -112,9 +109,7 @@ impl MinimaxTts {
   fn require_config(&self) -> Result<(&str, &str), SpeechError> {
     match (&self.api_key, &self.group_id) {
       (Some(k), Some(g)) => Ok((k.as_str(), g.as_str())),
-      _ => Err(SpeechError::request_build(
-        "minimax api_key or group_id missing (MINIMAX_API_KEY / MINIMAX_GROUP_ID)",
-      )),
+      _ => Err(SpeechError::request_build("minimax api_key or group_id missing (MINIMAX_API_KEY / MINIMAX_GROUP_ID)")),
     }
   }
 
@@ -155,10 +150,8 @@ impl MinimaxTts {
       let body = response.text().await.unwrap_or_default();
       return Err(Self::classify_http(status, body));
     }
-    let parsed: T2aResponse = response
-      .json()
-      .await
-      .map_err(|e| SpeechError::protocol(format!("parse t2a_v2 response: {e}")))?;
+    let parsed: T2aResponse =
+      response.json().await.map_err(|e| SpeechError::protocol(format!("parse t2a_v2 response: {e}")))?;
     parse_t2a_response(&parsed)
   }
 
@@ -223,12 +216,7 @@ impl MinimaxTts {
   ///
   /// `voice_id` 由调用方自定义（MiniMax 不生成新 ID，克隆成功后直接用该 ID 调
   /// 合成）；无自带试听产物（调用方需自行合成预览）。
-  pub async fn clone_voice(
-    &self,
-    sample_audio: &[u8],
-    voice_id: &str,
-    model: &str,
-  ) -> Result<String, SpeechError> {
+  pub async fn clone_voice(&self, sample_audio: &[u8], voice_id: &str, model: &str) -> Result<String, SpeechError> {
     let (key, group) = self.require_config()?;
     if sample_audio.is_empty() {
       return Err(SpeechError::request_build("clone_voice sample audio is empty"));
@@ -286,10 +274,8 @@ impl MinimaxTts {
       let body = resp.text().await.unwrap_or_default();
       return Err(Self::classify_http(status, body));
     }
-    let parsed: VoiceCloneResponse = resp
-      .json()
-      .await
-      .map_err(|e| SpeechError::protocol(format!("parse voice_clone response: {e}")))?;
+    let parsed: VoiceCloneResponse =
+      resp.json().await.map_err(|e| SpeechError::protocol(format!("parse voice_clone response: {e}")))?;
     if let Some(base) = &parsed.base_resp
       && base.status_code != 0
     {
@@ -388,8 +374,7 @@ fn t2a_body(req: &T2aRequest<'_>, stream: bool) -> serde_json::Value {
     },
   });
   if !req.pronunciation_tones.is_empty() {
-    body["pronunciation_dict"] =
-      serde_json::json!({ "tone": req.pronunciation_tones });
+    body["pronunciation_dict"] = serde_json::json!({ "tone": req.pronunciation_tones });
   }
   if req.subtitle_enable {
     body["subtitle_enable"] = serde_json::Value::Bool(true);
@@ -405,16 +390,12 @@ fn parse_t2a_response(parsed: &T2aResponse) -> Result<T2aAudio, SpeechError> {
     return Err(MinimaxTts::classify_base_resp(base.status_code, &base.status_msg));
   }
   let audio_hex = parsed.data.as_ref().map(|d| d.audio.as_str()).unwrap_or("");
-  let audio = decode_hex(audio_hex)
-    .ok_or_else(|| SpeechError::protocol("t2a_v2 audio hex decode failed: odd length"))?;
+  let audio =
+    decode_hex(audio_hex).ok_or_else(|| SpeechError::protocol("t2a_v2 audio hex decode failed: odd length"))?;
   if audio.is_empty() {
     return Err(SpeechError::protocol("t2a_v2 returned empty audio"));
   }
-  let raw_subtitle = parsed
-    .data
-    .as_ref()
-    .and_then(|d| d.subtitle_file.as_deref())
-    .filter(|s| !s.is_empty());
+  let raw_subtitle = parsed.data.as_ref().and_then(|d| d.subtitle_file.as_deref()).filter(|s| !s.is_empty());
   let (subtitle, subtitle_url) = match raw_subtitle {
     Some(s) if s.starts_with("http") => (None, Some(s.to_string())),
     Some(s) => (decode_hex(s).map(Bytes::from), None),
@@ -551,9 +532,10 @@ mod tests {
     // 1002 → rate limited
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-      .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
-        serde_json::json!({ "base_resp": { "status_code": 1002, "status_msg": "rate" } }),
-      ))
+      .respond_with(
+        wiremock::ResponseTemplate::new(200)
+          .set_body_json(serde_json::json!({ "base_resp": { "status_code": 1002, "status_msg": "rate" } })),
+      )
       .mount(&server)
       .await;
     let err = client(server.uri()).synthesize(T2aRequest::new("t", "v")).await.unwrap_err();
@@ -562,9 +544,10 @@ mod tests {
     // 2013 → permanent
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
-      .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
-        serde_json::json!({ "base_resp": { "status_code": 2013, "status_msg": "param" } }),
-      ))
+      .respond_with(
+        wiremock::ResponseTemplate::new(200)
+          .set_body_json(serde_json::json!({ "base_resp": { "status_code": 2013, "status_msg": "param" } })),
+      )
       .mount(&server)
       .await;
     let err = client(server.uri()).synthesize(T2aRequest::new("t", "v")).await.unwrap_err();
@@ -626,18 +609,14 @@ mod tests {
         serde_json::json!({ "voice_id": "my-voice", "file_id": 123456, "model": "m" }),
       ))
       .respond_with(
-        wiremock::ResponseTemplate::new(200).set_body_json(
-          serde_json::json!({ "base_resp": { "status_code": 0, "status_msg": "success" } }),
-        ),
+        wiremock::ResponseTemplate::new(200)
+          .set_body_json(serde_json::json!({ "base_resp": { "status_code": 0, "status_msg": "success" } })),
       )
       .expect(1)
       .mount(&server)
       .await;
 
-    let voice = client(server.uri())
-      .clone_voice(b"fake mp3", "my-voice", "m")
-      .await
-      .unwrap();
+    let voice = client(server.uri()).clone_voice(b"fake mp3", "my-voice", "m").await.unwrap();
     assert_eq!(voice, "my-voice");
   }
 

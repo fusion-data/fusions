@@ -13,10 +13,10 @@
 use futures::StreamExt;
 use std::time::Instant;
 
-use fusion_ai::providers::openai_compatible::responses_api::streaming::StreamingChoice;
+use fusion_ai::providers::openai_compatible::Client;
 use fusion_ai::providers::openai_compatible::responses_api::CompletionRequest;
+use fusion_ai::providers::openai_compatible::responses_api::streaming::StreamingChoice;
 use fusion_ai::providers::openai_compatible::types as core;
-use fusion_ai::providers::openai_compatible::{Client};
 
 /// 单端点 smoke：非流式 chat + 流式 stream，返回 (text, usage 描述, 延迟)。
 async fn smoke_endpoint(name: &str, base_url: &str, api_key: &str, model: &str, reasoning_off: serde_json::Value) {
@@ -43,11 +43,18 @@ async fn smoke_endpoint(name: &str, base_url: &str, api_key: &str, model: &str, 
       let usage = response
         .usage
         .as_ref()
-        .map(|u| format!("input={} output={} total={} reasoning_tokens={}", u.input_tokens, u.output_tokens, u.total_tokens, u.output_tokens_details.reasoning_tokens))
+        .map(|u| {
+          format!(
+            "input={} output={} total={} reasoning_tokens={}",
+            u.input_tokens, u.output_tokens, u.total_tokens, u.output_tokens_details.reasoning_tokens
+          )
+        })
         .unwrap_or_else(|| "None".into());
       println!(
-          "[{name}] NON-STREAM ok: latency={:?} status={:?} text={:?}\n[{name}] usage: {usage}",
-          latency, response.status, response.text()
+        "[{name}] NON-STREAM ok: latency={:?} status={:?} text={:?}\n[{name}] usage: {usage}",
+        latency,
+        response.status,
+        response.text()
       );
     }
     Err(e) => {
@@ -82,17 +89,16 @@ async fn smoke_endpoint(name: &str, base_url: &str, api_key: &str, model: &str, 
             chunks += 1;
           }
           StreamingChoice::Final(final_response) => {
-            final_usage = format!(
-              "input={} total={}",
-              final_response.usage.input_tokens, final_response.usage.total_tokens
-            );
+            final_usage =
+              format!("input={} total={}", final_response.usage.input_tokens, final_response.usage.total_tokens);
           }
           _ => {}
         }
       }
       println!(
-          "[{name}] STREAM ok: latency={:?} chunks={chunks} text={:?}\n[{name}] final usage: {final_usage}",
-          start.elapsed(), text
+        "[{name}] STREAM ok: latency={:?} chunks={chunks} text={:?}\n[{name}] final usage: {final_usage}",
+        start.elapsed(),
+        text
       );
       assert!(!text.is_empty(), "[{name}] stream text must not be empty");
       assert!(!final_usage.is_empty(), "[{name}] stream must carry final usage (response.completed)");

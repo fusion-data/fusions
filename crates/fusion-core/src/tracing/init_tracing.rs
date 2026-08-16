@@ -130,11 +130,7 @@ pub fn build_loglevel_filter_layer(c: &LogSetting) -> (EnvFilter, Option<String>
 /// fusion_core::configuration 在 TRACE 会 dump 整套环境变量（密钥泄露）。仅保留 target 指令
 /// 即可根治：全局默认级别统一走 conf `log_level`（调用方 or_else），不再被污染的裸级别覆盖。
 fn rust_log_directives(original: Option<&str>) -> Option<String> {
-  let directives: Vec<&str> = original?
-    .split(',')
-    .map(str::trim)
-    .filter(|d| d.contains('='))
-    .collect();
+  let directives: Vec<&str> = original?.split(',').map(str::trim).filter(|d| d.contains('=')).collect();
   (!directives.is_empty()).then(|| directives.join(","))
 }
 
@@ -256,10 +252,7 @@ mod tests {
   #[test]
   fn rust_log_directives_keeps_target_directives() {
     // 含 '=' 的 target 指令保留（用户临时调试 override，如 RUST_LOG=foo=debug）
-    assert_eq!(
-      rust_log_directives(Some("foo=debug,bar=trace")),
-      Some("foo=debug,bar=trace".to_string())
-    );
+    assert_eq!(rust_log_directives(Some("foo=debug,bar=trace")), Some("foo=debug,bar=trace".to_string()));
   }
 
   #[test]

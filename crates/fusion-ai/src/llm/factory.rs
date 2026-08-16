@@ -160,10 +160,7 @@ impl LlmProviderConfig {
   }
 
   /// Anthropic 命名构造器（中性参数面，§4.4 #1）。
-  pub fn anthropic_from_parts(
-    api_key: &str,
-    default_chat_model: Option<String>,
-  ) -> Result<Self, LlmError> {
+  pub fn anthropic_from_parts(api_key: &str, default_chat_model: Option<String>) -> Result<Self, LlmError> {
     require_api_key(LlmProviderId::Anthropic, api_key)?;
     Ok(Self::Anthropic {
       api_key: api_key.to_string(),
@@ -174,10 +171,7 @@ impl LlmProviderConfig {
   }
 
   /// Gemini 命名构造器（中性参数面，§4.4 #1）。
-  pub fn gemini_from_parts(
-    api_key: &str,
-    default_chat_model: Option<String>,
-  ) -> Result<Self, LlmError> {
+  pub fn gemini_from_parts(api_key: &str, default_chat_model: Option<String>) -> Result<Self, LlmError> {
     require_api_key(LlmProviderId::Gemini, api_key)?;
     Ok(Self::Gemini {
       api_key: api_key.to_string(),
@@ -201,11 +195,7 @@ pub fn parse_dashscope_region(region: Option<&str>) -> DashScopeRegion {
 
 /// api_key 非空校验。错误只报字段名，MUST NOT 回显值（该错误会进日志）。
 fn require_api_key(provider: LlmProviderId, key: &str) -> Result<(), LlmError> {
-  if key.trim().is_empty() {
-    Err(LlmError::ConfigInvalid(provider, "api_key required".to_string()))
-  } else {
-    Ok(())
-  }
+  if key.trim().is_empty() { Err(LlmError::ConfigInvalid(provider, "api_key required".to_string())) } else { Ok(()) }
 }
 
 /// 根据 [`LlmProviderConfig`] 派发到对应 impl。错误均为 [`LlmError::ConfigInvalid`]
@@ -321,10 +311,14 @@ mod tests {
   fn qwen_from_parts_normalizes_region_and_model() {
     // 别名归一：singapore / intl（大小写不敏感）→ Singapore；None / 未知 → Beijing
     let cfg = LlmProviderConfig::qwen_from_parts("sk-x", None, Some("INTL"), None, None, None).unwrap();
-    assert!(matches!(cfg, LlmProviderConfig::Qwen { region: DashScopeRegion::Singapore, ref default_chat_model, .. } if default_chat_model == "qwen3.7-plus"));
+    assert!(
+      matches!(cfg, LlmProviderConfig::Qwen { region: DashScopeRegion::Singapore, ref default_chat_model, .. } if default_chat_model == "qwen3.7-plus")
+    );
 
     let cfg = LlmProviderConfig::qwen_from_parts("sk-x", None, Some("garbage"), Some("  ".into()), None, None).unwrap();
-    assert!(matches!(cfg, LlmProviderConfig::Qwen { region: DashScopeRegion::Beijing, ref default_chat_model, .. } if default_chat_model == "qwen3.7-plus"));
+    assert!(
+      matches!(cfg, LlmProviderConfig::Qwen { region: DashScopeRegion::Beijing, ref default_chat_model, .. } if default_chat_model == "qwen3.7-plus")
+    );
 
     let cfg = LlmProviderConfig::qwen_from_parts("sk-x", None, None, Some("qwen3-max".into()), None, None).unwrap();
     assert!(matches!(cfg, LlmProviderConfig::Qwen { ref default_chat_model, .. } if default_chat_model == "qwen3-max"));
@@ -364,6 +358,8 @@ mod tests {
   #[test]
   fn deepseek_from_parts_fills_defaults() {
     let cfg = LlmProviderConfig::deepseek_from_parts("sk-x", None, None, None).unwrap();
-    assert!(matches!(cfg, LlmProviderConfig::DeepSeek { ref default_chat_model, .. } if default_chat_model == "deepseek-v4-flash"));
+    assert!(
+      matches!(cfg, LlmProviderConfig::DeepSeek { ref default_chat_model, .. } if default_chat_model == "deepseek-v4-flash")
+    );
   }
 }

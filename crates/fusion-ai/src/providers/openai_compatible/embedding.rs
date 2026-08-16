@@ -82,8 +82,7 @@ impl EmbeddingModel {
     }
 
     let bytes = response.bytes().await.map_err(|e| OpenAiCompatError::Transport(e.to_string()))?;
-    let parsed: ApiResponse<EmbeddingResponse> =
-      serde_json::from_slice(&bytes).map_err(OpenAiCompatError::from)?;
+    let parsed: ApiResponse<EmbeddingResponse> = serde_json::from_slice(&bytes).map_err(OpenAiCompatError::from)?;
 
     match parsed {
       ApiResponse::Ok(response) => {
@@ -93,20 +92,20 @@ impl EmbeddingModel {
         );
 
         if response.data.len() != documents.len() {
-          return Err(OpenAiCompatError::ResponseParse(
-            "Response data length does not match input length".into(),
-          ));
+          return Err(OpenAiCompatError::ResponseParse("Response data length does not match input length".into()));
         }
 
-        Ok(response
-          .data
-          .into_iter()
-          .zip(documents)
-          .map(|(embedding, document)| Embedding {
-            document,
-            vec: embedding.embedding.into_iter().map(|n| n.as_f64().unwrap_or(0.0)).collect(),
-          })
-          .collect())
+        Ok(
+          response
+            .data
+            .into_iter()
+            .zip(documents)
+            .map(|(embedding, document)| Embedding {
+              document,
+              vec: embedding.embedding.into_iter().map(|n| n.as_f64().unwrap_or(0.0)).collect(),
+            })
+            .collect(),
+        )
       }
       ApiResponse::Err(err) => Err(err.into()),
     }

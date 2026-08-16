@@ -118,12 +118,8 @@ impl QwenTts {
       return Ok(Bytes::from(audio));
     }
     // 防御路径：vendor 变更不带头的裸 PCM 流（未见此形态，按声明规格封装）
-    let mut wav = crate::providers::speech::pcm_wav_header(
-      PCM_SAMPLE_RATE,
-      PCM_CHANNELS,
-      PCM_BITS_PER_SAMPLE,
-      Some(audio.len()),
-    );
+    let mut wav =
+      crate::providers::speech::pcm_wav_header(PCM_SAMPLE_RATE, PCM_CHANNELS, PCM_BITS_PER_SAMPLE, Some(audio.len()));
     wav.extend_from_slice(&audio);
     Ok(Bytes::from(wav))
   }
@@ -136,12 +132,9 @@ impl QwenTts {
     &self,
     req: QwenTtsRequest<'_>,
   ) -> Result<futures::stream::BoxStream<'static, Result<AudioPart, SpeechError>>, SpeechError> {
-    let segments: Vec<String> =
-      split_text_segments(req.text, MAX_TEXT_CHARS).into_iter().map(String::from).collect();
+    let segments: Vec<String> = split_text_segments(req.text, MAX_TEXT_CHARS).into_iter().map(String::from).collect();
     if segments.len() == 1 {
-      return self
-        .synthesize_stream_raw(QwenTtsRequest { text: &segments[0], ..req })
-        .await;
+      return self.synthesize_stream_raw(QwenTtsRequest { text: &segments[0], ..req }).await;
     }
     let client = self.clone();
     let model = req.model.map(String::from);
@@ -178,11 +171,7 @@ impl QwenTts {
     }
     let body = QwenTtsSseRequest {
       model: req.model.unwrap_or(&self.model),
-      input: QwenTtsInput {
-        text: req.text,
-        voice: req.voice,
-        language_type: req.language_type.unwrap_or("Chinese"),
-      },
+      input: QwenTtsInput { text: req.text, voice: req.voice, language_type: req.language_type.unwrap_or("Chinese") },
       parameters: QwenTtsParameters { stream: true },
     };
     let response = self
@@ -285,8 +274,7 @@ fn parse_sse_chunk(payload: &str) -> SseChunk {
     return SseChunk::Ignore;
   };
   if let Some(code) = parsed.get("code").and_then(|c| c.as_str()).filter(|c| !c.is_empty()) {
-    let message =
-      parsed.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string();
+    let message = parsed.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string();
     return SseChunk::Error { code: code.to_string(), message };
   }
   let audio = match parsed.pointer("/output/audio") {
@@ -344,9 +332,7 @@ fn split_text_segments(text: &str, max_chars: usize) -> Vec<&str> {
     let cut = window
       .iter()
       .rposition(|&(_, c)| sentence_end(c))
-      .unwrap_or_else(|| {
-        window.iter().rposition(|&(_, c)| matches!(c, '，' | '、' | ',')).unwrap_or(max_chars - 1)
-      });
+      .unwrap_or_else(|| window.iter().rposition(|&(_, c)| matches!(c, '，' | '、' | ',')).unwrap_or(max_chars - 1));
     let end_char = start_char + cut + 1;
     let start_byte = indexed[start_char].0;
     let end_byte = indexed.get(end_char).map_or(text.len(), |(b, _)| *b);
@@ -425,9 +411,7 @@ mod tests {
       SseChunk::Data(b) => assert_eq!(&b[..], &[0x01, 0x02]),
       other => panic!("expected Data, got {other:?}"),
     }
-    match parse_sse_chunk(
-      r#"{"output":{"audio":{"data":"","url":"http://oss/xxx.wav"}},"usage":{"characters":10}}"#,
-    ) {
+    match parse_sse_chunk(r#"{"output":{"audio":{"data":"","url":"http://oss/xxx.wav"}},"usage":{"characters":10}}"#) {
       SseChunk::Final => {}
       other => panic!("expected Final, got {other:?}"),
     }
@@ -470,9 +454,7 @@ mod tests {
         "id:1\nevent:result\ndata: {{\"output\":{{\"audio\":{{\"data\":\"{data}\",\"url\":\"\"}}}}}}\n\n"
       ));
     }
-    body.push_str(
-      "data: {\"output\":{\"audio\":{\"data\":\"\",\"url\":\"http://oss/full.wav\"}}}\n\n",
-    );
+    body.push_str("data: {\"output\":{\"audio\":{\"data\":\"\",\"url\":\"http://oss/full.wav\"}}}\n\n");
     body
   }
 
@@ -500,8 +482,7 @@ mod tests {
       .mount(&server)
       .await;
 
-    let client =
-      QwenTts::new(creds()).unwrap().with_base_url(Some(server.uri())).with_model("qwen3-tts-flash");
+    let client = QwenTts::new(creds()).unwrap().with_base_url(Some(server.uri())).with_model("qwen3-tts-flash");
     let wav = client.synthesize(QwenTtsRequest::new("你好", "Cherry")).await.unwrap();
     assert_eq!(wav.len(), 44 + 150);
     assert_eq!(&wav[0..4], b"RIFF");
@@ -539,22 +520,17 @@ mod tests {
     let text = "字".repeat(1200); // 2 段
     wiremock::Mock::given(wiremock::matchers::method("POST"))
       .and(wiremock::matchers::body_partial_json(serde_json::json!({ "input": { "text": "字".repeat(600) } })))
-      .respond_with(
-        wiremock::ResponseTemplate::new(200).set_body_string(sse_response(&[{
-          let mut c = crate::providers::speech::pcm_wav_header(24_000, 1, 16, None);
-          c.extend_from_slice(&[0x0A; 10]);
-          c
-        }])),
-      )
+      .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse_response(&[{
+        let mut c = crate::providers::speech::pcm_wav_header(24_000, 1, 16, None);
+        c.extend_from_slice(&[0x0A; 10]);
+        c
+      }])))
       .up_to_n_times(1)
       .mount(&server)
       .await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
       .and(wiremock::matchers::body_partial_json(serde_json::json!({ "input": { "text": "字".repeat(600) } })))
-      .respond_with(
-        wiremock::ResponseTemplate::new(200)
-          .set_body_string(sse_response(&[vec![0x0B; 10]])),
-      )
+      .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse_response(&[vec![0x0B; 10]])))
       .mount(&server)
       .await;
 

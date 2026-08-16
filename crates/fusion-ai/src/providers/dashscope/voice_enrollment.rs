@@ -40,12 +40,7 @@ impl QwenVoiceEnrollment {
       .timeout(Duration::from_secs(120))
       .build()
       .map_err(|e| SpeechError::RequestBuild(format!("build reqwest client: {e}")))?;
-    Ok(Self {
-      credentials: Arc::new(credentials),
-      region: DashScopeRegion::default(),
-      base_url_override: None,
-      http,
-    })
+    Ok(Self { credentials: Arc::new(credentials), region: DashScopeRegion::default(), base_url_override: None, http })
   }
 
   pub fn with_region(mut self, region: DashScopeRegion) -> Self {
@@ -100,10 +95,7 @@ impl QwenVoiceEnrollment {
     }
     if req.preferred_name.is_empty()
       || req.preferred_name.len() > 16
-      || !req
-        .preferred_name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+      || !req.preferred_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
       return Err(SpeechError::request_build(format!(
         "preferred_name must be 1-16 chars of [0-9A-Za-z_], got {:?}",
@@ -112,10 +104,7 @@ impl QwenVoiceEnrollment {
     }
     // base64 Data URL 形态（音频容器按 magic bytes 探测，探测不出按 mp3 兜底）
     let mime = req.audio_mime.unwrap_or_else(|| detect_audio_container(req.audio_bytes).mime());
-    let data_url = format!(
-      "data:{mime};base64,{}",
-      base64::engine::general_purpose::STANDARD.encode(req.audio_bytes)
-    );
+    let data_url = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(req.audio_bytes));
     let mut input = serde_json::json!({
       "action": "create",
       "target_model": req.target_model,
@@ -139,18 +128,11 @@ impl QwenVoiceEnrollment {
       .ok_or_else(|| SpeechError::protocol(format!("response missing output.voice; body={parsed}")))?;
     Ok(EnrolledVoice {
       voice: voice.to_string(),
-      target_model: output
-        .get("target_model")
-        .and_then(|m| m.as_str())
-        .unwrap_or(req.target_model)
-        .to_string(),
+      target_model: output.get("target_model").and_then(|m| m.as_str()).unwrap_or(req.target_model).to_string(),
       // 音频质量不佳 / 与文本不匹配时 vendor 降级（no_merged_segments /
       // no_valid_asr_segments 等）——克隆仍可用，调用方按需告警
       fallback_mode: output.get("fallback_mode").and_then(|f| f.as_bool()),
-      fallback_reason: output
-        .get("fallback_reason")
-        .and_then(|r| r.as_str())
-        .map(String::from),
+      fallback_reason: output.get("fallback_reason").and_then(|r| r.as_str()).map(String::from),
     })
   }
 
@@ -174,23 +156,13 @@ impl QwenVoiceEnrollment {
           .iter()
           .map(|item| VoiceListItem {
             voice: item.get("voice").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-            target_model: item
-              .get("target_model")
-              .and_then(|m| m.as_str())
-              .unwrap_or_default()
-              .to_string(),
-            gmt_create: item
-              .get("gmt_create")
-              .and_then(|t| t.as_str())
-              .map(String::from),
+            target_model: item.get("target_model").and_then(|m| m.as_str()).unwrap_or_default().to_string(),
+            gmt_create: item.get("gmt_create").and_then(|t| t.as_str()).map(String::from),
           })
           .collect()
       })
       .unwrap_or_default();
-    Ok(VoiceList {
-      total_count: output.get("total_count").and_then(|t| t.as_i64()).unwrap_or_default(),
-      voices,
-    })
+    Ok(VoiceList { total_count: output.get("total_count").and_then(|t| t.as_i64()).unwrap_or_default(), voices })
   }
 
   /// 删除克隆音色。
@@ -198,9 +170,7 @@ impl QwenVoiceEnrollment {
     if voice.is_empty() {
       return Err(SpeechError::request_build("voice is empty"));
     }
-    self
-      .post_action(serde_json::json!({ "action": "delete", "voice": voice }))
-      .await?;
+    self.post_action(serde_json::json!({ "action": "delete", "voice": voice })).await?;
     Ok(())
   }
 }

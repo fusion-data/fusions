@@ -105,10 +105,7 @@ impl TryFrom<ImageGenerationRawResponse> for ImageGenerationResponse {
   type Error = OpenAiCompatError;
 
   fn try_from(value: ImageGenerationRawResponse) -> Result<Self, Self::Error> {
-    let first = value
-      .data
-      .first()
-      .ok_or_else(|| OpenAiCompatError::ResponseParse("missing image data".into()))?;
+    let first = value.data.first().ok_or_else(|| OpenAiCompatError::ResponseParse("missing image data".into()))?;
 
     let image = if !first.b64_json.is_empty() {
       base64::prelude::BASE64_STANDARD

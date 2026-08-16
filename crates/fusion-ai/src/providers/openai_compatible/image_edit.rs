@@ -191,10 +191,7 @@ impl TryFrom<ImageEditResponse> for ImageEditResult {
   type Error = OpenAiCompatError;
 
   fn try_from(value: ImageEditResponse) -> Result<Self, Self::Error> {
-    let first = value
-      .data
-      .first()
-      .ok_or_else(|| OpenAiCompatError::ResponseParse("empty data array".into()))?;
+    let first = value.data.first().ok_or_else(|| OpenAiCompatError::ResponseParse("empty data array".into()))?;
     let url = first.url.as_str();
     let image = if url.is_empty() {
       // Decode from base64

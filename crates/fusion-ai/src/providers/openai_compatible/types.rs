@@ -96,11 +96,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
   type Item = &'a T;
 
   fn next(&mut self) -> Option<Self::Item> {
-    if let Some(first) = self.first.take() {
-      Some(first)
-    } else {
-      self.rest.next()
-    }
+    if let Some(first) = self.first.take() { Some(first) } else { self.rest.next() }
   }
 
   fn size_hint(&self) -> (usize, Option<usize>) {
@@ -252,9 +248,13 @@ where
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum Message {
-  System { content: String },
+  System {
+    content: String,
+  },
 
-  User { content: OneOrMany<UserContent> },
+  User {
+    content: OneOrMany<UserContent>,
+  },
 
   Assistant {
     /// provider 侧 assistant 消息 ID（Responses 回放需要）
@@ -278,10 +278,7 @@ impl Message {
   }
 
   pub fn assistant_with_id(id: String, text: impl Into<String>) -> Self {
-    Self::Assistant {
-      id: Some(id),
-      content: OneOrMany::one(AssistantContent::Text(Text::new(text))),
-    }
+    Self::Assistant { id: Some(id), content: OneOrMany::one(AssistantContent::Text(Text::new(text))) }
   }
 }
 
@@ -302,12 +299,7 @@ impl UserContent {
   }
 
   pub fn image_url(url: impl Into<String>, media_type: Option<ImageMediaType>, detail: Option<ImageDetail>) -> Self {
-    Self::Image(Image {
-      data: DocumentSourceKind::Url(url.into()),
-      media_type,
-      detail,
-      additional_params: None,
-    })
+    Self::Image(Image { data: DocumentSourceKind::Url(url.into()), media_type, detail, additional_params: None })
   }
 
   pub fn audio(data: impl Into<String>, media_type: Option<AudioMediaType>) -> Self {
@@ -483,7 +475,9 @@ pub enum ReasoningContent {
     signature: Option<String>,
   },
   Encrypted(String),
-  Redacted { data: String },
+  Redacted {
+    data: String,
+  },
   Summary(String),
 }
 
@@ -597,7 +591,9 @@ pub enum ToolChoice {
   Auto,
   None,
   Required,
-  Specific { function_names: Vec<String> },
+  Specific {
+    function_names: Vec<String>,
+  },
 }
 
 /// provider 无关的工具定义。

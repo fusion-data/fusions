@@ -63,16 +63,10 @@ impl TranscriptionModel {
   }
 
   /// 语音转文字（multipart/form-data）。
-  pub async fn transcription(
-    &self,
-    request: TranscriptionRequest,
-  ) -> Result<TranscriptionResponse, OpenAiCompatError> {
+  pub async fn transcription(&self, request: TranscriptionRequest) -> Result<TranscriptionResponse, OpenAiCompatError> {
     let mut form = reqwest::multipart::Form::new()
       .text("model", self.model.clone())
-      .part(
-        "file",
-        reqwest::multipart::Part::bytes(request.data).file_name(request.filename),
-      );
+      .part("file", reqwest::multipart::Part::bytes(request.data).file_name(request.filename));
 
     if let Some(language) = request.language {
       form = form.text("language", language);

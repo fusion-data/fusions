@@ -878,18 +878,14 @@ mod tests {
     let last_two = context.get_last_messages(2).await;
     assert_eq!(last_two.len(), 2);
     let text_of = |msg: &crate::providers::openai_compatible::types::Message| match msg {
-      crate::providers::openai_compatible::types::Message::User { content } => {
-        match content.first() {
-          crate::providers::openai_compatible::types::UserContent::Text(text) => text.text.clone(),
-          _ => String::new(),
-        }
-      }
-      crate::providers::openai_compatible::types::Message::Assistant { content, .. } => {
-        match content.first() {
-          crate::providers::openai_compatible::types::AssistantContent::Text(text) => text.text.clone(),
-          _ => String::new(),
-        }
-      }
+      crate::providers::openai_compatible::types::Message::User { content } => match content.first() {
+        crate::providers::openai_compatible::types::UserContent::Text(text) => text.text.clone(),
+        _ => String::new(),
+      },
+      crate::providers::openai_compatible::types::Message::Assistant { content, .. } => match content.first() {
+        crate::providers::openai_compatible::types::AssistantContent::Text(text) => text.text.clone(),
+        _ => String::new(),
+      },
       crate::providers::openai_compatible::types::Message::System { content } => content.clone(),
     };
     assert_eq!(text_of(&last_two[0]), "Message 2");

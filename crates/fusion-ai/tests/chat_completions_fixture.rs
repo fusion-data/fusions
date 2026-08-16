@@ -343,7 +343,7 @@ fn client_debug_never_leaks_api_key() {
 }
 
 // ================================================================
-// cache 命中 usage 双方言解析（t047：DeepSeek flat / OpenAI 嵌套）
+// cache 命中 usage 双方言解析（DeepSeek flat / OpenAI 嵌套，两者并存取 max）
 // ================================================================
 
 #[tokio::test]

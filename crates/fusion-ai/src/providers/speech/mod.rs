@@ -122,12 +122,7 @@ impl SseDataParser {
 ///
 /// `data_len = None` 写 0xFFFFFFFF 占位——流式场景总长未知，浏览器按 EOF 收尾
 /// 容忍该值（校准点：真实联调时确认目标播放器行为）。
-pub fn pcm_wav_header(
-  sample_rate: u32,
-  channels: u16,
-  bits_per_sample: u16,
-  data_len: Option<usize>,
-) -> Vec<u8> {
+pub fn pcm_wav_header(sample_rate: u32, channels: u16, bits_per_sample: u16, data_len: Option<usize>) -> Vec<u8> {
   let data_len = data_len.map_or(0xFFFF_FFFF, |n| n as u32);
   let byte_rate = sample_rate * channels as u32 * (bits_per_sample / 8) as u32;
   let block_align = channels * (bits_per_sample / 8);
@@ -214,10 +209,7 @@ pub fn decode_hex(hex: &str) -> Option<Vec<u8>> {
   if !hex.len().is_multiple_of(2) {
     return None;
   }
-  (0..hex.len())
-    .step_by(2)
-    .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
-    .collect()
+  (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect()
 }
 
 #[cfg(test)]
@@ -229,34 +221,25 @@ mod tests {
     // 限流：429 / Vendor rate_limited
     assert!(SpeechError::Http { status: 429, message: String::new() }.is_rate_limited());
     assert!(SpeechError::Http { status: 429, message: String::new() }.is_retryable());
-    assert!(SpeechError::Vendor {
-      code: "1002".into(),
-      message: String::new(),
-      rate_limited: true,
-      transient: false,
-    }
-    .is_rate_limited());
+    assert!(
+      SpeechError::Vendor { code: "1002".into(), message: String::new(), rate_limited: true, transient: false }
+        .is_rate_limited()
+    );
     // 上游瞬态：5xx / Vendor transient / 传输层
     assert!(SpeechError::Http { status: 503, message: String::new() }.is_retryable());
     assert!(!SpeechError::Http { status: 503, message: String::new() }.is_rate_limited());
-    assert!(SpeechError::Vendor {
-      code: "55000000".into(),
-      message: String::new(),
-      rate_limited: false,
-      transient: true,
-    }
-    .is_retryable());
+    assert!(
+      SpeechError::Vendor { code: "55000000".into(), message: String::new(), rate_limited: false, transient: true }
+        .is_retryable()
+    );
     assert!(SpeechError::Transport("connect refused".into()).is_retryable());
     assert!(SpeechError::StreamMidway("eof".into()).is_retryable());
     // 本地缺陷：4xx / Protocol / RequestBuild
     assert!(!SpeechError::Http { status: 401, message: String::new() }.is_retryable());
-    assert!(!SpeechError::Vendor {
-      code: "2013".into(),
-      message: String::new(),
-      rate_limited: false,
-      transient: false,
-    }
-    .is_retryable());
+    assert!(
+      !SpeechError::Vendor { code: "2013".into(), message: String::new(), rate_limited: false, transient: false }
+        .is_retryable()
+    );
     assert!(!SpeechError::Protocol("bad json".into()).is_retryable());
     assert!(!SpeechError::RequestBuild("empty text".into()).is_retryable());
   }

@@ -11,8 +11,8 @@
 
 use serde::Deserialize;
 
-use crate::providers::openai_compatible::errors::OpenAiCompatError;
 use crate::providers::openai_compatible::CompletionModel;
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
 
 use super::embedding::{EmbeddingModel, TEXT_EMBEDDING_3_LARGE, TEXT_EMBEDDING_3_SMALL, TEXT_EMBEDDING_ADA_002};
 use super::transcription::TranscriptionModel;
@@ -70,10 +70,7 @@ pub struct Client {
 
 impl Debug for Client {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("Client")
-      .field("base_url", &self.base_url)
-      .field("api_key", &"<REDACTED>")
-      .finish()
+    f.debug_struct("Client").field("base_url", &self.base_url).field("api_key", &"<REDACTED>").finish()
   }
 }
 
@@ -115,7 +112,8 @@ impl Client {
 
   /// 原生 reqwest POST（JSON body + bearer auth）——本地化 wire 路径统一入口。
   pub(crate) fn post_json(&self, path: &str, body: Vec<u8>) -> reqwest::RequestBuilder {
-    self.http_client
+    self
+      .http_client
       .post(self.endpoint(path))
       .bearer_auth(&self.api_key)
       .header("Content-Type", "application/json")
@@ -143,10 +141,7 @@ impl Client {
 
     match response.status().as_u16() {
       200..=299 => Ok(()),
-      401 => Err(OpenAiCompatError::Http {
-        status: 401,
-        message: "Invalid authentication".to_string(),
-      }),
+      401 => Err(OpenAiCompatError::Http { status: 401, message: "Invalid authentication".to_string() }),
       status if status >= 500 => {
         let message = response.text().await.unwrap_or_default();
         Err(OpenAiCompatError::Http { status, message })
@@ -226,7 +221,6 @@ impl Client {
     let model = model.into();
     AudioGenerationModel::new(self.clone(), &model)
   }
-
 }
 
 #[derive(Debug, Deserialize)]
@@ -419,10 +413,8 @@ mod tests {
 
     let user_message = core::Message::User { content: OneOrMany::one(core::UserContent::text("Hello")) };
 
-    let assistant_message = core::Message::Assistant {
-      id: None,
-      content: OneOrMany::one(core::AssistantContent::text("Hi there!")),
-    };
+    let assistant_message =
+      core::Message::Assistant { id: None, content: OneOrMany::one(core::AssistantContent::text("Hi there!")) };
 
     let converted_user_message: Vec<Message> = try_from_message_to_vec_input_item(user_message.clone()).unwrap();
     let converted_assistant_message: Vec<Message> =
@@ -447,7 +439,8 @@ mod tests {
   fn test_message_from_message_conversion() {
     use crate::providers::openai_compatible::types as core;
 
-    let user_message = Message::User { content: OneOrMany::one(WireUserContent::Text { text: "Hello".to_string() }), name: None };
+    let user_message =
+      Message::User { content: OneOrMany::one(WireUserContent::Text { text: "Hello".to_string() }), name: None };
 
     let assistant_message = Message::Assistant {
       content: vec![AssistantContent::Text { text: "Hi there!".to_string() }],

@@ -115,12 +115,12 @@ impl FunAsrRealtime {
   ) -> Result<Self, crate::speech_to_text::SpeechToTextError> {
     if api_key.trim().is_empty() {
       // 只报字段名，不回显值（该错误会进日志）
-      return Err(crate::speech_to_text::SpeechToTextError::ConfigInvalid(
-        "api_key required".to_string(),
-      ));
+      return Err(crate::speech_to_text::SpeechToTextError::ConfigInvalid("api_key required".to_string()));
     }
-    Ok(Self::new(DashScopeCredentials { api_key: api_key.to_string(), workspace_id }, region)
-      .with_model(model.unwrap_or(DEFAULT_REALTIME_ASR_MODEL)))
+    Ok(
+      Self::new(DashScopeCredentials { api_key: api_key.to_string(), workspace_id }, region)
+        .with_model(model.unwrap_or(DEFAULT_REALTIME_ASR_MODEL)),
+    )
   }
 
   /// 覆盖 WebSocket endpoint —— **仅测试**(对着本地假服务端跑会话级用例)。

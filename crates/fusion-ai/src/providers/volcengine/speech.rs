@@ -93,10 +93,7 @@ impl DoubaoSpeech {
     Self {
       api_key,
       base_url,
-      http: reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()
-        .expect("reqwest client build"),
+      http: reqwest::Client::builder().timeout(Duration::from_secs(300)).build().expect("reqwest client build"),
     }
   }
 
@@ -105,9 +102,10 @@ impl DoubaoSpeech {
   }
 
   fn require_config(&self) -> Result<&str, SpeechError> {
-    self.api_key.as_deref().ok_or_else(|| {
-      SpeechError::request_build("doubao speech api_key missing (DOUBAO_SPEECH_API_KEY)")
-    })
+    self
+      .api_key
+      .as_deref()
+      .ok_or_else(|| SpeechError::request_build("doubao speech api_key missing (DOUBAO_SPEECH_API_KEY)"))
   }
 
   /// 每请求唯一 `X-Api-Request-Id`（官方要求 uuid；v4 hex 形态）。
@@ -169,11 +167,7 @@ impl DoubaoSpeech {
       "language": 0,
       "extra_params": { "demo_text": demo_text },
     });
-    let response = self
-      .post(VOICE_CLONE_PATH, None, &body)
-      .send()
-      .await
-      .map_err(SpeechError::from)?;
+    let response = self.post(VOICE_CLONE_PATH, None, &body).send().await.map_err(SpeechError::from)?;
     let response = Self::check_http(response).await?;
     let parsed: CloneVoiceResponse = response
       .json()
@@ -195,18 +189,16 @@ impl DoubaoSpeech {
     // demo_audio 编码形态官方未明示（按 base64 处理）：解码失败降级 None，
     // 调用方回落自行合成预览并经日志暴露缺口——clone 本身成功，不因试听作废。
     let demo_audio = match parsed.demo_audio.as_deref() {
-      Some(d) if !d.is_empty() => base64::engine::general_purpose::STANDARD
-        .decode(d)
-        .map(Bytes::from)
-        .map(Some)
-        .unwrap_or_else(|_| {
+      Some(d) if !d.is_empty() => {
+        base64::engine::general_purpose::STANDARD.decode(d).map(Bytes::from).map(Some).unwrap_or_else(|_| {
           tracing::warn!(
             target: "fusion_ai::providers::volcengine",
             len = d.len(),
             "voice_clone demo_audio is not valid base64, caller falls back to synthesize preview"
           );
           None
-        }),
+        })
+      }
       _ => None,
     };
     Ok(DoubaoClonedVoice { speaker_id: custom_speaker_id.to_string(), demo_audio })
@@ -331,16 +323,7 @@ pub struct UnidirectionalRequest<'a> {
 
 impl<'a> UnidirectionalRequest<'a> {
   pub fn new(text: &'a str, speaker: &'a str, resource_id: ResourceId) -> Self {
-    Self {
-      text,
-      speaker,
-      resource_id,
-      format: "mp3",
-      speed: 1.0,
-      volume: 1.0,
-      model: None,
-      context_texts: None,
-    }
+    Self { text, speaker, resource_id, format: "mp3", speed: 1.0, volume: 1.0, model: None, context_texts: None }
   }
 }
 
@@ -370,9 +353,8 @@ fn unidirectional_body(req: &UnidirectionalRequest<'_>) -> serde_json::Value {
   if let Some(context_texts) = req.context_texts
     && !context_texts.is_empty()
   {
-    req_params["context_texts"] = serde_json::Value::Array(
-      context_texts.iter().map(|t| serde_json::Value::String(t.clone())).collect(),
-    );
+    req_params["context_texts"] =
+      serde_json::Value::Array(context_texts.iter().map(|t| serde_json::Value::String(t.clone())).collect());
   }
   serde_json::json!({ "req_params": req_params })
 }
@@ -433,8 +415,7 @@ fn parse_stream_line(line: &str) -> Option<StreamEvent> {
     return Some(StreamEvent::Done);
   }
   if code != 0 {
-    let message =
-      parsed.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string();
+    let message = parsed.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string();
     return Some(StreamEvent::Error { code, message });
   }
   Some(StreamEvent::Ignore)
@@ -464,10 +445,7 @@ mod tests {
   }
 
   fn stream_body(chunks: &[&[u8]]) -> String {
-    let mut lines: Vec<String> = chunks
-      .iter()
-      .map(|c| format!(r#"{{"code":0,"data":"{}"}}"#, b64(c)))
-      .collect();
+    let mut lines: Vec<String> = chunks.iter().map(|c| format!(r#"{{"code":0,"data":"{}"}}"#, b64(c))).collect();
     lines.push(format!(r#"{{"code":{},"message":"ok","data":null}}"#, STREAM_DONE_CODE));
     lines.join("\n")
   }
@@ -613,18 +591,14 @@ mod tests {
         "extra_params": { "demo_text": "试听文案" },
       })))
       .respond_with(
-        wiremock::ResponseTemplate::new(200).set_body_json(
-          serde_json::json!({ "status": 2, "message": "Success", "demo_audio": demo }),
-        ),
+        wiremock::ResponseTemplate::new(200)
+          .set_body_json(serde_json::json!({ "status": 2, "message": "Success", "demo_audio": demo })),
       )
       .expect(1)
       .mount(&server)
       .await;
 
-    let cloned = client(server.uri())
-      .clone_voice(sample, "hetu_1a2b3c4d5e6f", "试听文案")
-      .await
-      .unwrap();
+    let cloned = client(server.uri()).clone_voice(sample, "hetu_1a2b3c4d5e6f", "试听文案").await.unwrap();
     assert_eq!(cloned.speaker_id, "hetu_1a2b3c4d5e6f");
     assert_eq!(&cloned.demo_audio.unwrap()[..], b"demo-pcm");
 
@@ -640,9 +614,8 @@ mod tests {
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
       .respond_with(
-        wiremock::ResponseTemplate::new(200).set_body_json(
-          serde_json::json!({ "status": 3, "message": "Training Failed" }),
-        ),
+        wiremock::ResponseTemplate::new(200)
+          .set_body_json(serde_json::json!({ "status": 3, "message": "Training Failed" })),
       )
       .mount(&server)
       .await;

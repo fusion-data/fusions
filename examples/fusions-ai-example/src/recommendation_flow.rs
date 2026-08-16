@@ -20,17 +20,17 @@ const MAX_RETRIES: u32 = 3;
 // -----------------------------------------------------------------------------
 fn get_chat_model() -> anyhow::Result<CompletionModel> {
   let api_key = std::env::var("DEEPSEEK_API_KEY").map_err(|_| anyhow::anyhow!("DEEPSEEK_API_KEY not set"))?;
-  let client =
-    fusions::ai::providers::openai_compatible::Client::builder(&api_key).base_url("https://api.deepseek.com").build();
+  let client = fusions::ai::providers::openai_compatible::Client::builder(&api_key)
+    .base_url("https://api.deepseek.com")
+    .build();
   Ok(client.chat_completions_model("deepseek-v4-flash"))
 }
 
 async fn chat_once(model: &CompletionModel, prompt: &str, history: Vec<core_types::Message>) -> anyhow::Result<String> {
   let mut full_history = history;
   full_history.push(core_types::Message::user(prompt.to_string()));
-  let request =
-    CompletionRequest::from_history(model.model(), None, full_history, vec![], None, None, None, None)
-      .map_err(|e| anyhow::anyhow!("build request failed: {e}"))?;
+  let request = CompletionRequest::from_history(model.model(), None, full_history, vec![], None, None, None, None)
+    .map_err(|e| anyhow::anyhow!("build request failed: {e}"))?;
   let response = model.completion(request).await.map_err(|e| anyhow::anyhow!("LLM chat failed: {e}"))?;
   Ok(response.text().unwrap_or_default())
 }

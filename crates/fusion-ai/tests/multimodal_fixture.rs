@@ -8,13 +8,13 @@ mod fixture_common;
 use base64::Engine;
 use fixture_common::{API_KEY, request_body};
 use serde_json::json;
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use fusion_ai::providers::openai_compatible::Client;
 use fusion_ai::providers::openai_compatible::audio_generation::AudioGenerationRequest;
 use fusion_ai::providers::openai_compatible::image_generation::ImageGenerationRequest;
 use fusion_ai::providers::openai_compatible::transcription::TranscriptionRequest;
-use fusion_ai::providers::openai_compatible::Client;
 
 async fn mock_client(server: &MockServer) -> Client {
   Client::builder(API_KEY).base_url(server.uri().as_str()).build()
@@ -44,10 +44,7 @@ async fn embedding_request_shape_and_parse() {
 
   let client = mock_client(&server).await;
   let model = client.embedding_model_with_ndims("text-embedding-3-small", 3);
-  let embeddings = model
-    .embed_texts(vec!["hello".to_string(), "world".to_string()])
-    .await
-    .expect("embedding succeeds");
+  let embeddings = model.embed_texts(vec!["hello".to_string(), "world".to_string()]).await.expect("embedding succeeds");
 
   let body = request_body(&server).await;
   assert_eq!(body["model"], "text-embedding-3-small");
@@ -90,12 +87,7 @@ async fn transcription_multipart_shape_and_parse() {
 
   let requests = server.received_requests().await.expect("request recorded");
   let request = &requests[0];
-  let content_type = request
-    .headers
-    .get("content-type")
-    .expect("content-type present")
-    .to_str()
-    .unwrap();
+  let content_type = request.headers.get("content-type").expect("content-type present").to_str().unwrap();
   assert!(content_type.starts_with("multipart/form-data"), "unexpected content-type: {content_type}");
 
   let body = String::from_utf8_lossy(&request.body);

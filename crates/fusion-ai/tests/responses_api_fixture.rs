@@ -214,7 +214,7 @@ async fn deepseek_responses_streaming_terminated_by_completed_event() {
 }
 
 // ================================================================
-// 流式终态 cached_tokens 透传（t047：Qwen Responses 隐式缓存）
+// 流式终态 cached_tokens 透传（Qwen Responses 隐式缓存）
 // ================================================================
 
 #[tokio::test]

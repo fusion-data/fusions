@@ -1,7 +1,7 @@
 //! OpenAI Audio Generation API（TTS，类型本地化）。
 
-use crate::providers::openai_compatible::errors::OpenAiCompatError;
 use crate::providers::openai_compatible::Client;
+use crate::providers::openai_compatible::errors::OpenAiCompatError;
 use serde_json::json;
 
 pub const TTS_1: &str = "tts-1";
