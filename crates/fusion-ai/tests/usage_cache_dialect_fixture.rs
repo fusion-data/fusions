@@ -3,12 +3,11 @@
 //! 判据唯一实现 = `providers::openai_compatible::completion::cache_hit_input_tokens`
 //! （DeepSeek flat `prompt_cache_hit_tokens` / OpenAI 嵌套
 //! `prompt_tokens_details.cached_tokens`，同时出现取 max，皆无 → 0）。
-//! 本文件把同组 usage payload 同时喂
-//! - `providers::openai_compatible`（`CompletionModel`，非流式）；
-//! - `llm::wire_openai_compat`（`OpenAiCompatTransport`）；
-//! 两套 wire 的 cache 命中数 MUST 相等且等于期望值 —— 双 wire 同源由本测试机器钉死，
-//! 不靠审查纪律。流式终态同判据（同一 `Usage::deserialize`）由
-//! `chat_completions_fixture.rs` 的 `deepseek_streaming_final_usage_carries_cache_hit_tokens` 覆盖。
+//! 本文件把同组 usage payload 同时喂 `providers::openai_compatible`（`CompletionModel`，
+//! 非流式）与 `llm::wire_openai_compat`（`OpenAiCompatTransport`），两套 wire 的 cache
+//! 命中数 MUST 相等且等于期望值 —— 双 wire 同源由本测试机器钉死，不靠审查纪律。
+//! 流式终态同判据（同一 `Usage::deserialize`）由 `chat_completions_fixture.rs` 的
+//! `deepseek_streaming_final_usage_carries_cache_hit_tokens` 覆盖。
 
 mod fixture_common;
 
