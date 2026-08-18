@@ -39,6 +39,7 @@ fusion-mq = { version = "0.3.0", path = "crates/fusion-mq" }
 fusion-web = { version = "0.3.0", path = "crates/fusion-web" }
 fusion-rpc = { version = "0.3.0", path = "crates/fusion-rpc" }
 fusion-ai = { version = "0.3.0", path = "crates/fusion-ai" }
+fusion-storage = { version = "0.3.0", path = "crates/fusion-storage" }
 fusions = { version = "0.3.0", path = "crates/fusions" }
 # -- projects end - fusion
 
@@ -323,13 +324,9 @@ buffa-build = "0.8"
 buffa-types = { version = "0.8", features = ["json"] }
 # protoc-bin-vendored = "3"
 # -- cloud storage access
-opendal = { version = "0.57", features = [
-  "services-oss",
-  "services-obs",
-  "services-s3",
-  "services-fs",
-  "services-memory",
-] }
+# opendal 刻意不在 workspace 模板声明：fusion-storage 以直声明做 feature 透传
+# （services-* 集合由其 crate feature 决定；workspace 模板会把固定 feature 集
+# 带进所有消费闭包，透传即失效）。版本捆绑口径与 pin 注释见该 crate Cargo.toml。
 # -- request signing (Apache opendal-reqsign — Aliyun ACS3 / AWS SigV4 等云厂商签名 trait)
 reqsign-core = { version = "3.0" }
 # -- LLM

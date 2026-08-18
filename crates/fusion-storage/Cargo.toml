@@ -1,0 +1,39 @@
+[package]
+name = "fusion-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Fusion object storage: opendal Operator factory (feature-gated backends) + presigned URL (native presign / fs HMAC fallback)"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# 后端 feature 透传：每个 feature 映射 opendal 的 services-*，消费方按需启用，
+# 未启用的后端在 build_operator 返回「enable fusion-storage feature」错误（见 README 映射表）。
+# fs 收进 default：无云厂商依赖，最小接入与单测可用；云后端一律显式启用。
+default = ["fs"]
+fs = ["opendal/services-fs"]
+oss = ["opendal/services-oss"]
+s3 = ["opendal/services-s3"]
+obs = ["opendal/services-obs"]
+
+[dependencies]
+# opendal 直声明而非 workspace 模板：feature 透传要求 services-* 集合由本 crate feature 决定，
+# workspace 模板会把固定 feature 集带进所有消费闭包。版本与消费仓同锁 0.57
+# （0.58.0 已 yank、0.58.1 未发布；quick-xml 相关 RUSTSEC 暂忍口径由消费仓各自的
+# deny.toml / pin 注释记录）。升级前 MUST 读消费仓 pin 注释，MUST NOT 在本 crate 单独 bump。
+opendal = { version = "0.57" }
+chrono = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+percent-encoding = { version = "2" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+toml = { workspace = true }

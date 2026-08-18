@@ -15,6 +15,7 @@
 | `fusion-rpc`         | ConnectRPC 服务与客户端 transport                    |
 | `fusion-ai`          | AI 集成：LLM、向量数据库、STT                         |
 | `fusion-mq`          | 消息队列：Postgres 事件队列 producer/consumer         |
+| `fusion-storage`     | 对象存储：opendal Operator 工厂（feature 透传）+ 预签名 URL（native presign / fs HMAC 兜底） |
 | `hetuflow`           | 工作流框架：durable workflow（聚合包，feature-gated） |
 | `fusions`            | 聚合包：一键引入全部功能                              |
 

@@ -712,7 +712,7 @@ impl Context {
   /// # }
   /// ```
   pub async fn get_last_messages(&self, n: usize) -> Vec<OpenAiCompatMessage> {
-    self.get_last_messages_serializable(n).await.iter().map(|msg| Self::to_message(msg)).collect()
+    self.get_last_messages_serializable(n).await.iter().map(Self::to_message).collect()
   }
 
   /// Get the last N messages as serializable messages.
