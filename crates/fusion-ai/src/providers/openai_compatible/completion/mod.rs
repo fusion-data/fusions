@@ -591,7 +591,7 @@ impl CompletionResponse {
         input_tokens: usage.prompt_tokens as u64,
         output_tokens: usage.total_tokens.saturating_sub(usage.prompt_tokens) as u64,
         total_tokens: usage.total_tokens as u64,
-        cached_input_tokens: usage.cached_input_tokens(),
+        cached_input_tokens: usage.cached_input_tokens,
         cache_creation_input_tokens: 0,
       },
       None => core::Usage::default(),
@@ -614,12 +614,29 @@ pub struct Choice {
   pub finish_reason: String,
 }
 
+/// cache 命中数判据**单点** —— 双方言解析的唯一实现：
+///
+/// - DeepSeek flat `prompt_cache_hit_tokens`
+/// - OpenAI 嵌套 `prompt_tokens_details.cached_tokens`
+///
+/// 厂商只回其一；同时出现取 max（防御性，避免同 token 双计）；皆无 → 0（退化为不拆分口径）。
+/// 输入是**原始 usage JSON**（不依赖任何一方 wire 的本地类型），[`Usage`] 的
+/// `Deserialize` 与 `llm::wire_openai_compat` 的 wire 用量都 MUST 经本函数取值 ——
+/// 两套 OpenAI 兼容 wire 同源由「函数只有一个」兜底，不靠审查纪律。
+pub(crate) fn cache_hit_input_tokens(usage: &serde_json::Value) -> u64 {
+  let flat = usage.get("prompt_cache_hit_tokens").and_then(serde_json::Value::as_u64).unwrap_or(0);
+  let nested = usage
+    .pointer("/prompt_tokens_details/cached_tokens")
+    .and_then(serde_json::Value::as_u64)
+    .unwrap_or(0);
+  flat.max(nested)
+}
+
 /// Chat Completions wire 用量（OpenAI 方言：prompt_tokens / completion_tokens / total_tokens）。
 ///
-/// cache 命中数双方言解析（均 `#[serde(default)]`，缺省 0）：DeepSeek flat
-/// `prompt_cache_hit_tokens` + OpenAI 嵌套 `prompt_tokens_details.cached_tokens`。
-/// 厂商只回其一；同时出现取 max（防御性，避免同 token 双计）。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+/// `cached_input_tokens` 在 [`Deserialize`] 时即从原始 usage JSON 经
+/// [`cache_hit_input_tokens`]（判据单点）求值落字段，后续读取零解析成本。
+#[derive(Clone, Debug, Serialize)]
 pub struct Usage {
   #[serde(default)]
   pub prompt_tokens: usize,
@@ -627,35 +644,38 @@ pub struct Usage {
   pub completion_tokens: usize,
   #[serde(default)]
   pub total_tokens: usize,
+  /// cache 命中 input tokens（双方言判据见 [`cache_hit_input_tokens`]；皆无 → 0）。
   #[serde(default)]
-  pub prompt_cache_hit_tokens: usize,
-  #[serde(default)]
-  pub prompt_tokens_details: Option<PromptTokensDetails>,
+  pub cached_input_tokens: u64,
+}
+
+impl<'de> Deserialize<'de> for Usage {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default)]
+    struct Base {
+      prompt_tokens: usize,
+      completion_tokens: usize,
+      total_tokens: usize,
+    }
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    let base: Base = serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+    Ok(Self {
+      prompt_tokens: base.prompt_tokens,
+      completion_tokens: base.completion_tokens,
+      total_tokens: base.total_tokens,
+      cached_input_tokens: cache_hit_input_tokens(&raw),
+    })
+  }
 }
 
 impl Usage {
   pub fn new() -> Self {
-    Self {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-      prompt_cache_hit_tokens: 0,
-      prompt_tokens_details: None,
-    }
+    Self { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_input_tokens: 0 }
   }
-
-  /// cache 命中 input tokens（双方言取值，皆无 → 0，退化为不拆分口径）。
-  pub fn cached_input_tokens(&self) -> u64 {
-    let nested = self.prompt_tokens_details.as_ref().map(|d| d.cached_tokens as u64).unwrap_or(0);
-    (self.prompt_cache_hit_tokens as u64).max(nested)
-  }
-}
-
-/// OpenAI 方言嵌套明细（`prompt_tokens_details`）。
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PromptTokensDetails {
-  #[serde(default)]
-  pub cached_tokens: usize,
 }
 
 impl Default for Usage {

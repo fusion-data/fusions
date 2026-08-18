@@ -34,7 +34,7 @@ impl StreamingCompletionResponse {
       input_tokens: self.usage.prompt_tokens as u64,
       output_tokens: self.usage.total_tokens.saturating_sub(self.usage.prompt_tokens) as u64,
       total_tokens: self.usage.total_tokens as u64,
-      cached_input_tokens: self.usage.cached_input_tokens(),
+      cached_input_tokens: self.usage.cached_input_tokens,
       cache_creation_input_tokens: 0,
     }
   }

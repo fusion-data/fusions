@@ -176,6 +176,12 @@ pub struct TokenUsage {
   pub prompt_tokens: u32,
   pub completion_tokens: u32,
   pub total_tokens: u32,
+  /// cache 命中 input tokens —— 判据单点 =
+  /// [`crate::providers::openai_compatible::completion::cache_hit_input_tokens`]
+  /// （双方言：DeepSeek flat / OpenAI 嵌套，同时出现取 max，皆无 → 0）。
+  /// `#[serde(default)]`：旧 JSON（无此字段）反序列化为 0，向后兼容。
+  #[serde(default)]
+  pub cached_input_tokens: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -282,5 +288,21 @@ mod tests {
     assert!(!http_4xx.is_retryable());
     assert!(!parse.is_retryable());
     assert!(!no_enable.is_retryable());
+  }
+
+  /// 旧 JSON（`cached_input_tokens` 落地前序列化）缺字段 → 反序列化为 0，不报错。
+  #[test]
+  fn token_usage_deserializes_legacy_json_without_cache_field() {
+    let legacy = serde_json::json!({"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10});
+    let usage: TokenUsage = serde_json::from_value(legacy).expect("legacy JSON must parse");
+    assert_eq!(usage.prompt_tokens, 7);
+    assert_eq!(usage.cached_input_tokens, 0);
+  }
+
+  #[test]
+  fn token_usage_cache_field_round_trips() {
+    let usage = TokenUsage { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105, cached_input_tokens: 80 };
+    let back: TokenUsage = serde_json::from_value(serde_json::to_value(&usage).unwrap()).unwrap();
+    assert_eq!(back.cached_input_tokens, 80);
   }
 }

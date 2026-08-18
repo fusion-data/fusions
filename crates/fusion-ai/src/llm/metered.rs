@@ -190,6 +190,11 @@ pub struct AiUsageEvent {
   pub prompt_tokens: i64,
   pub completion_tokens: i64,
   pub total_tokens: i64,
+  /// cache 命中 input tokens —— `Option` 即 DB 列 NULL 语义（`cached_input_tokens`
+  /// BIGINT NULL：NULL = 未拆分/不适用，0 = 真零命中，类型层可区分）：
+  /// - chat（[`Self::from_ctx_tokens`]）：恒 `Some`（wire 皆无 cache 字段 → `Some(0)`）；
+  /// - STT（[`Self::from_ctx_audio`]）：恒 `None` —— STT 无 cache 维度，不拆分。
+  pub cached_input_tokens: Option<i64>,
   pub session_id: Option<Uuid>,
   pub request_kind: String,
   pub latency_ms: Option<i64>,
@@ -228,6 +233,7 @@ impl AiUsageEvent {
       prompt_tokens: i64::from(usage.prompt_tokens),
       completion_tokens: i64::from(usage.completion_tokens),
       total_tokens: i64::from(usage.total_tokens),
+      cached_input_tokens: Some(i64::from(usage.cached_input_tokens)),
       session_id: ctx.session_id,
       request_kind: ctx.request_kind.clone(),
       latency_ms,
@@ -263,6 +269,8 @@ impl AiUsageEvent {
       prompt_tokens: 0,
       completion_tokens: 0,
       total_tokens: 0,
+      // STT 无 cache 维度（计量维度是 audio_duration_ms）—— None = 未拆分，非「零命中」。
+      cached_input_tokens: None,
       session_id: ctx.session_id,
       request_kind: ctx.request_kind.clone(),
       latency_ms,
@@ -446,16 +454,23 @@ mod tests {
   #[test]
   fn event_carries_dimension_snapshot_from_ctx() {
     let c = ctx(MatchedScope::Dimension);
-    let usage = TokenUsage { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 };
+    let usage = TokenUsage { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3, cached_input_tokens: 0 };
     let ev = AiUsageEvent::from_ctx_tokens(&c, &usage, Outcome::Success, Utc::now(), Some(7));
     assert_eq!(ev.dimensions, c.dimensions, "维度快照 MUST 随事件落账");
     assert_eq!(ev.matched_scope, MatchedScope::Dimension);
+    // chat 事件恒 Some：wire 皆无 cache 字段时 = Some(0)（真零），不是 None（未拆分）。
+    assert_eq!(ev.cached_input_tokens, Some(0));
   }
 
   #[tokio::test]
   async fn records_on_ok_with_usage() {
     let sink = RecordingSink::new();
-    let inner = MockProvider::ok(Some(TokenUsage { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 }));
+    let inner = MockProvider::ok(Some(TokenUsage {
+      prompt_tokens: 120,
+      completion_tokens: 30,
+      total_tokens: 150,
+      cached_input_tokens: 80,
+    }));
     let metered = MeteredLlmProvider::new(inner, ctx(MatchedScope::Platform), sink.clone());
     let out = metered.chat_complete(ChatCompletionRequest::default()).await;
     assert!(out.is_ok());
@@ -465,6 +480,8 @@ mod tests {
     assert_eq!(ev.prompt_tokens, 120);
     assert_eq!(ev.completion_tokens, 30);
     assert_eq!(ev.total_tokens, 150);
+    // cache 维度 MUST 随事件透传（计量链完整性）。
+    assert_eq!(ev.cached_input_tokens, Some(80));
     assert_eq!(ev.outcome, Outcome::Success);
     assert_eq!(ev.feature_code, "chat");
     assert_eq!(ev.request_kind, "ai_chat");
@@ -491,7 +508,12 @@ mod tests {
 
   #[tokio::test]
   async fn noop_sink_is_silent() {
-    let inner = MockProvider::ok(Some(TokenUsage { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }));
+    let inner = MockProvider::ok(Some(TokenUsage {
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      total_tokens: 2,
+      cached_input_tokens: 0,
+    }));
     let metered = MeteredLlmProvider::new(inner, ctx(MatchedScope::SystemDefault), Arc::new(NoopUsageSink));
     // NoopUsageSink 不 panic、不副作用，仅透传 chat_complete。
     assert!(metered.chat_complete(ChatCompletionRequest::default()).await.is_ok());

@@ -299,7 +299,11 @@ struct WireFunctionCall {
   arguments: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+/// OpenAI 兼容 wire 用量。`cached_input_tokens` 与 `providers::openai_compatible`
+/// 的 completion `Usage` 同源 —— 双方言判据单点 =
+/// [`crate::providers::openai_compatible::completion::cache_hit_input_tokens`]，
+/// 两套 wire MUST NOT 各持方言解析副本。
+#[derive(Debug, Clone, Serialize, Default)]
 struct WireUsage {
   #[serde(default)]
   prompt_tokens: u32,
@@ -307,11 +311,44 @@ struct WireUsage {
   completion_tokens: u32,
   #[serde(default)]
   total_tokens: u32,
+  #[serde(default)]
+  cached_input_tokens: u32,
+}
+
+impl<'de> Deserialize<'de> for WireUsage {
+  /// 先收原始 usage JSON：三方 token 走常规字段，cache 命中经共享判据函数求值
+  /// （u64 → u32 饱和，绝不为 absurd 值炸整张响应）。
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct Base {
+      prompt_tokens: u32,
+      completion_tokens: u32,
+      total_tokens: u32,
+    }
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    let base: Base = serde_json::from_value(raw.clone()).map_err(serde::de::Error::custom)?;
+    let cached = crate::providers::openai_compatible::completion::cache_hit_input_tokens(&raw);
+    Ok(Self {
+      prompt_tokens: base.prompt_tokens,
+      completion_tokens: base.completion_tokens,
+      total_tokens: base.total_tokens,
+      cached_input_tokens: u32::try_from(cached).unwrap_or(u32::MAX),
+    })
+  }
 }
 
 impl From<WireUsage> for TokenUsage {
   fn from(u: WireUsage) -> Self {
-    Self { prompt_tokens: u.prompt_tokens, completion_tokens: u.completion_tokens, total_tokens: u.total_tokens }
+    Self {
+      prompt_tokens: u.prompt_tokens,
+      completion_tokens: u.completion_tokens,
+      total_tokens: u.total_tokens,
+      cached_input_tokens: u.cached_input_tokens,
+    }
   }
 }
 
@@ -323,11 +360,7 @@ impl WireChatCompletionResponse {
     _req: &ChatCompletionRequest,
   ) -> Option<ChatCompletionResponse> {
     let model = self.model.clone().unwrap_or_else(|| default_model.to_string());
-    let usage = self.usage.as_ref().map(|u| TokenUsage {
-      prompt_tokens: u.prompt_tokens,
-      completion_tokens: u.completion_tokens,
-      total_tokens: u.total_tokens,
-    });
+    let usage = self.usage.clone().map(TokenUsage::from);
     let finish_reason = self.choices.first().and_then(|c| c.finish_reason.clone());
 
     let mut metadata = serde_json::Map::new();
@@ -557,6 +590,60 @@ mod tests {
     let raw = r#"{ "model": "x", "choices": [] }"#;
     let parsed: WireChatCompletionResponse = serde_json::from_str(raw).unwrap();
     assert!(parsed.into_response(LlmProviderId::Qwen, "x", &ChatCompletionRequest::default()).is_none());
+  }
+
+  /// helper：从含 usage 的响应 JSON 提取 TokenUsage（走完整 wire 解析路径）。
+  fn usage_of(usage_json: &str) -> TokenUsage {
+    let raw = format!(
+      r#"{{ "model": "m", "choices": [ {{ "message": {{ "role": "assistant", "content": "ok" }} }} ], "usage": {} }}"#,
+      usage_json
+    );
+    let parsed: WireChatCompletionResponse = serde_json::from_str(&raw).unwrap();
+    parsed
+      .into_response(LlmProviderId::DeepSeek, "m", &ChatCompletionRequest::default())
+      .expect("must parse")
+      .usage
+      .expect("usage present")
+  }
+
+  // —— cache 双方言：判据单点 = providers::openai_compatible::completion::cache_hit_input_tokens，
+  //    与 openai_compatible wire 对同组输入的断言值一致（跨 wire 一致性另由
+  //    tests/usage_cache_dialect_fixture.rs 在 mock server 上钉死）。 ——
+
+  #[test]
+  fn parse_usage_deepseek_flat_cache_dialect() {
+    let usage = usage_of(
+      r#"{ "prompt_tokens": 1000, "completion_tokens": 50, "total_tokens": 1050, "prompt_cache_hit_tokens": 800, "prompt_cache_miss_tokens": 200 }"#,
+    );
+    assert_eq!(usage.cached_input_tokens, 800);
+    assert_eq!(usage.total_tokens, 1050);
+  }
+
+  #[test]
+  fn parse_usage_openai_nested_cache_dialect() {
+    let usage = usage_of(
+      r#"{ "prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940, "prompt_tokens_details": { "cached_tokens": 600 } }"#,
+    );
+    assert_eq!(usage.cached_input_tokens, 600);
+  }
+
+  #[test]
+  fn parse_usage_both_dialects_present_takes_max() {
+    // 防御性：双方言同时出现取 max，避免同 token 双计。
+    let usage = usage_of(
+      r#"{ "prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940, "prompt_cache_hit_tokens": 100, "prompt_tokens_details": { "cached_tokens": 600 } }"#,
+    );
+    assert_eq!(usage.cached_input_tokens, 600);
+    let flipped = usage_of(
+      r#"{ "prompt_tokens": 900, "completion_tokens": 40, "total_tokens": 940, "prompt_cache_hit_tokens": 700, "prompt_tokens_details": { "cached_tokens": 600 } }"#,
+    );
+    assert_eq!(flipped.cached_input_tokens, 700);
+  }
+
+  #[test]
+  fn parse_usage_without_cache_fields_degrades_to_zero() {
+    let usage = usage_of(r#"{ "prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14 }"#);
+    assert_eq!(usage.cached_input_tokens, 0, "unknown dialect degrades to 0");
   }
 
   #[test]
