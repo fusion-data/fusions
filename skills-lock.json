@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "doc-governance": {
+      "source": "yangjing/skills",
+      "sourceType": "github",
+      "skillPath": "skills/doc-governance/SKILL.md",
+      "computedHash": "3397c46c1a47bab6165ed45f9ccdcee03a3135c3749541647e392f4371f933d2"
+    },
+    "sdd": {
+      "source": "yangjing/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sdd/SKILL.md",
+      "computedHash": "782ff53103f642522ac4362cadd9ecbeff11781d3bf304ffe002893fc4846c64"
+    }
+  }
+}
