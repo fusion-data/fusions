@@ -1,6 +1,11 @@
 # fusion-ai 脱钩 rig —— OpenAI 兼容层本地化（Responses API 优先）
 
-> Status: Active
+> **历史参考**（2026-08-19 归档）：本计划已完结归档，正文为执行期真相记录，MUST NOT 作为现行规范依据；现行 API 口径见 `.agents/skills/fusions/references/fusion-ai.md`（hetu-creative 仓）+ fusion-ai 源码注释。
+
+> Status: Archived（2026-08-19 用户决策归档；P0-P7 全部完成）
+> 归档核实（机器证据 2026-08-19 复跑）：验收 #1 `cargo tree -p fusion-ai` 零 rig ✓；#4 本仓 `cargo tree -p creative-ai-service` 零 rig ✓；#6 hetuos `Cargo.toml`/`Cargo.lock` 零 rig ✓（submodule bump 后传导完成）；#9 fusions skill 已改本地 API 口径（残留 rig 提及均为历史叙述）✓；#2/#3 fusion-ai fixture 套件 + fusions 错误分级锚点测试全绿（fusions 四门禁多轮跑过）；#5 P5b 真机结论在档（Qwen 切 Responses ✅ `reasoning.effort="none"`；DeepSeek 留 Chat Completions——Responses 形态无 thinking 完全关闭等价参数，理由自包含 §5 P5b）；#7/#8 hetuos 侧 `make check` 白名单零改动 + `ai-chat.test.ts` 全链绿（其 `fusion-consumer-convergence-2` 计划验收归档，commit 98cabe5）。
+> 回流判定（§4.6 Output）：已回流——rig 移除后的 API 口径 → hetu-creative 仓 `.agents/skills/fusions/references/fusion-ai.md`（P6 完成）；行为基线 → `crates/fusion-ai/tests/` fixture 套件常驻（代码为真相源）；判无需回流——sqlx 解锁升级另立项属 TODOS 性质、P5b 真机数据属一次性执行记录。
+
 > 负责人: Yang Jing
 > 目标版本: fusions 0.4.0（破坏性：`AiError` 变体收敛、rig re-export 与 factory 路径删除）
 > 关联: 原 deferred 计划 `fusion-ai-model-gateway-core.md` 已删除——其 P1/P4（rig optionalization → removal）由本计划承接；P2/P3（model_gateway canonical 抽象层）否决（无多 provider 归一化的真实消费方，属提前优化）；其 P3 的职责边界并入本计划非目标（见 §2）。
