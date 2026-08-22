@@ -31,8 +31,9 @@ use fusions::security::{SecurityError, SecurityResult};
 use fusions::core::security::SecurityUtils;
 use fusions::core::configuration::SecuritySetting;
 
-// Password hashing lives in fusion-core, NOT fusion-security.
-use fusions::core::security::pwd::{generate_pwd, verify_pwd, is_strong_password};
+// Password hashing lives in fusion-security (moved out of
+// fusion-core::security::pwd in v0.3 — fusion-core is JWT/HMAC-only now).
+use fusions::security::pwd::{generate_pwd, verify_pwd, is_strong_password};
 
 // OAuth (feature: with-oauth)
 use fusions::security::oauth::{
@@ -54,7 +55,12 @@ pub enum SecurityError {
     TokenExpired,
     InvalidToken,
     OAuth(String),
-    Core(fusion_core::security::Error),  // wraps lower-level crypto errors
+    FailedToHashPassword,
+    InvalidPassword,                    // verify_pwd: hash valid, wrong password
+    FailedToVerifyPassword,
+    InvalidHashFormat,                  // stored hash is not PHC format
+    PasswordWorkerJoinFailed(String),   // spawn_blocking JoinError
+    Core(fusion_core::security::Error), // wraps lower-level crypto errors
     Custom(String),
 }
 
@@ -114,13 +120,17 @@ private_key = ""
 expires_in  = 3600
 ```
 
-## Password hashing — `fusion-core::security::pwd`
+## Password hashing — `fusion-security::pwd`
 
 Argon2 + random 16-byte salt, executed on `spawn_blocking`. The persisted
 format is `#<version>#<argon2-encoded-hash>` (current `version = 1`).
+Moved out of `fusion-core::security::pwd` in v0.3 — import from
+`fusions::security::pwd`; `fusion-core` no longer depends on argon2.
+The old `fusion_core::security::Error::InvalidFormat` variant was renamed
+to `SecurityError::InvalidHashFormat` in the move.
 
 ```rust
-use fusions::core::security::pwd::{generate_pwd, verify_pwd, is_strong_password};
+use fusions::security::pwd::{generate_pwd, verify_pwd, is_strong_password};
 
 let hashed: String = generate_pwd("Plain.Password1").await?;    // "#1#$argon2id$..."
 let version: u16   = verify_pwd("Plain.Password1", &hashed).await?;
@@ -131,6 +141,17 @@ if !is_strong_password(candidate) {
     return Err(DataError::bad_request("Password too weak"));
 }
 ```
+
+`verify_pwd` returns `SecurityError::InvalidPassword` when the stored hash
+is valid but the password doesn't match — login-style handlers should
+match it explicitly to surface a distinct "bad credentials" error, and
+treat `FailedToHashPassword` / `InvalidHashFormat` /
+`PasswordWorkerJoinFailed` as server-side trouble. Note the default
+`From<SecurityError> for DataError` (in `fusions::error`) maps
+`FailedToVerifyPassword` — a server-side argon2 failure — to
+`DataError::unauthorized` alongside `InvalidPassword`, while the other
+three pwd variants map to `DataError::server_error`; rely on explicit
+matches, not the default conversion, when the distinction matters.
 
 ## OAuth2 (feature `oauth`)
 
@@ -233,6 +254,6 @@ responsible for the next hop — building `AppContext` from those headers.
 
 - `crates/fusion-security/src/jwt/token.rs` — `make_token` / `make_token_by_user_id`
 - `crates/fusion-core/src/security/security_utils.rs` — `SecurityUtils::{encrypt_jwt, decrypt_jwt}`
-- `crates/fusion-core/src/security/pwd.rs` — `generate_pwd` / `verify_pwd` / `is_strong_password`
+- `crates/fusion-security/src/pwd.rs` — `generate_pwd` / `verify_pwd` / `is_strong_password`
 - `crates/fusion-security/src/oauth/mod.rs` — `OAuthProvider` / `OAuthClient` / `MemoryTokenStore`
 - `crates/fusion-security/src/reqsign_aliyun_acs3/` — ACS3 v3 signing

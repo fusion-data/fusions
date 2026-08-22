@@ -33,6 +33,7 @@ impl and configuration structs (`AuthConfig`, `ContextValidationConfig`,
 | SQL crates | `fusionsql` → **`fusion-sql`**, `fusionsql-core` → **`fusion-sql-core`**, `fusionsql-macros` **deleted** |
 | ORM surface | The whole sea-query stack is **gone**: `Fields` / `FilterNodes` / `SeaFieldValue` macros, `OpVal*`, `FilterGroups`, `DbBmc` / `BmcConfig` / `base::*` CRUD, `page::{Page, Paged, PageResult, OrderBys}`, `with_filter_interceptor`. Write SQL with sqlx against `DbxPostgres`. |
 | Auth | `fusion-rpc` adds `TrustedSubject` + `AuthConfig::trusted_subject_rpcs` (**`AuthConfig` gained a field** — literal constructions must add it) |
+| Password | `fusion_core::security::pwd` moved to **`fusion-security`** (import `fusions::security::pwd`); `SecurityError` gained 5 pwd variants (`InvalidPassword`, `FailedToHashPassword`, `FailedToVerifyPassword`, `InvalidHashFormat`, `PasswordWorkerJoinFailed` — `InvalidHashFormat` is the old `Error::InvalidFormat`, renamed) and `fusion_core::security::Error` lost them (JWT/HMAC-only now) |
 | AI metering | `AiUsageEvent::from_ctx_usage` → **`from_ctx_tokens`**; new `from_ctx_audio` for STT; `AiUsageEvent` is now `#[non_exhaustive]` (construct via those two fns only) |
 | AI STT | `paraformer` module **deleted** → `dashscope::FunAsrRealtime`; `AudioStreamConfig::hotwords` → `vocabulary_ids` + `context_items`; `AudioEncoding::as_provider_str` removed |
 | Misc | `SensitiveString` lost its `sea_query::Value` / `Nullable` impls; `fusion-core` dropped the unused `fusionsql` feature |
@@ -51,7 +52,7 @@ Full migration table (old symbol → replacement) at the top of
 | Web        | `fusions::web::*`       | `Router`, `WebError`, `WebResult`, `WebServerBuilder`       |
 | RPC        | `fusions::rpc::*`       | `AuthLayer`, `ContextValidationLayer`, `TrustedSubject`, `mount_rpc_services`, `build_connect_transport`, `ConnectTransport` |
 | SQL        | `fusions::sql::*`       | `ModelManager<C>`, `ModelContext`, `store::DbxPostgres`, `id::Id`, `DbConfig`, `SqlError` |
-| Security   | `fusions::security::*`  | `SecurityError`, `jwt::token::make_token`, `oauth::OAuthClient` |
+| Security   | `fusions::security::*`  | `SecurityError`, `pwd::{generate_pwd, verify_pwd, is_strong_password}`, `jwt::token::make_token`, `oauth::OAuthClient` |
 | AI         | `fusions::ai::*`        | `providers::openai_compatible::*` (Responses 默认 / Chat Completions 显式), `graph_flow::*`, `llm::MeteredLlmProvider`, `speech_to_text::SpeechToText`, `AiError` |
 | MQ         | `fusion_mq::*`          | `MessageQueuePlugin`, `EventProducerHandle`, `EventConsumerHandle`, `PublishEvent`, `RetryDecision` |
 
