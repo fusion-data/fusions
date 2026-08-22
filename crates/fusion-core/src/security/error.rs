@@ -8,9 +8,6 @@ pub enum Error {
   #[error("Hmac failure new from slice")]
   HmacFailNewFromSlice,
 
-  #[error("Invalid format")]
-  InvalidFormat,
-
   #[error("Cannot decode ident")]
   CannotDecodeIdent,
 
@@ -28,20 +25,6 @@ pub enum Error {
 
   #[error("Token not yet valid")]
   TokenNotYetValid,
-
-  #[error("Failed to hash password")]
-  FailedToHashPassword,
-
-  #[error("Invalid password")]
-  InvalidPassword,
-
-  #[error("Failed to verify password")]
-  FailedToVerifyPassword,
-
-  /// `tokio::task::spawn_blocking` JoinError —— argon2 worker 线程异常
-  /// （runtime shutdown / OOM / panic）。生产路径应 graceful 上报而非 panic。
-  #[error("Password worker join failed: {0}")]
-  PasswordWorkerJoinFailed(String),
 
   #[error(transparent)]
   JoseError(#[from] josekit::JoseError),

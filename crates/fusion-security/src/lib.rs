@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod jwt;
+pub mod pwd;
 
 #[cfg(feature = "with-oauth")]
 pub mod oauth;

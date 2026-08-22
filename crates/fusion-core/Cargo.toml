@@ -36,7 +36,6 @@ thiserror = { workspace = true }
 dashmap = { workspace = true }
 inventory = { workspace = true }
 async-trait = { workspace = true }
-regex.workspace = true
 futures.workspace = true
 tokio.workspace = true
 mea.workspace = true
@@ -48,8 +47,6 @@ uuid = { workspace = true }
 ulid = { workspace = true, optional = true }
 hierarchical_hash_wheel_timer = { workspace = true }
 log.workspace = true
-rand.workspace = true
-argon2.workspace = true
 josekit.workspace = true
 
 # -- fast log

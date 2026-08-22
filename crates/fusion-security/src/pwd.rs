@@ -2,24 +2,40 @@ use std::sync::OnceLock;
 
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash};
-use log::{error, trace};
 use rand::Rng;
 use regex::Regex;
+use tracing::{error, trace};
 
-use super::{Error, INVARIANT_VIOLATED_MSG, RECOMMENDED_LENGTH, Result};
+use crate::error::{SecurityError, SecurityResult};
 
 const CUR_PWD_VERSION: u16 = 1;
 
+/// Recommended length of a salt: 16-bytes.
+///
+/// This recommendation comes from the [PHC string format specification]:
+///
+/// > The role of salts is to achieve uniqueness. A *random* salt is fine
+/// > for that as long as its length is sufficient; a 16-byte salt would
+/// > work well (by definition, UUID are very good salts, and they encode
+/// > over exactly 16 bytes). 16 bytes encode as 22 characters in B64.
+///
+/// [PHC string format specification]: https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md#function-duties
+const RECOMMENDED_LENGTH: usize = 16;
+
+/// Error message used with `expect` for when internal invariants are violated
+/// (i.e. the contents of a [`Salt`] should always be valid)
+const INVARIANT_VIOLATED_MSG: &str = "salt string invariant violated";
+
 /// 生成密码。密码格式为：#<version>#<hash>
-pub async fn generate_pwd(password: &str) -> Result<String> {
+pub async fn generate_pwd(password: &str) -> SecurityResult<String> {
   let hash = try_to_hash(password.to_owned()).await?;
   Ok(format!("#{}#{}", CUR_PWD_VERSION, hash))
 }
 
 /// 验证密码。成功返回密码版本，失败返回错误。
-pub async fn verify_pwd(password: &str, hashed_pwd: &str) -> Result<u16> {
+pub async fn verify_pwd(password: &str, hashed_pwd: &str) -> SecurityResult<u16> {
   let (version, hash) = split_pwd_version(hashed_pwd);
-  if verify(password.to_owned(), hash.to_owned()).await? { Ok(version) } else { Err(Error::InvalidPassword) }
+  if verify(password.to_owned(), hash.to_owned()).await? { Ok(version) } else { Err(SecurityError::InvalidPassword) }
 }
 
 const ALLOWED_SPECIAL: &[u8] = b"-_+=/@#$%^&*(),./?[]";
@@ -37,14 +53,14 @@ pub fn is_strong_password(password: &str) -> bool {
   has_letter && has_digit && all_allowed
 }
 
-pub(crate) async fn try_to_hash(plain_pwd: String) -> Result<String> {
+async fn try_to_hash(plain_pwd: String) -> SecurityResult<String> {
   tokio::task::spawn_blocking(move || {
     let salt = generate_salt();
     let hash = Argon2::default()
       .hash_password(plain_pwd.as_bytes(), &salt)
       .map_err(|e| {
         error!("Failed to hash password: {}", e);
-        Error::FailedToHashPassword
+        SecurityError::FailedToHashPassword
       })?
       .to_string();
     Ok(hash)
@@ -52,7 +68,7 @@ pub(crate) async fn try_to_hash(plain_pwd: String) -> Result<String> {
   .await
   .map_err(|e| {
     error!("password hash worker join failed: {e}");
-    Error::PasswordWorkerJoinFailed(e.to_string())
+    SecurityError::PasswordWorkerJoinFailed(e.to_string())
   })?
 }
 
@@ -63,11 +79,11 @@ fn generate_salt() -> SaltString {
   SaltString::encode_b64(&bytes).expect(INVARIANT_VIOLATED_MSG)
 }
 
-pub(crate) async fn verify(plain_pwd: String, hashed_pwd: String) -> Result<bool> {
+async fn verify(plain_pwd: String, hashed_pwd: String) -> SecurityResult<bool> {
   tokio::task::spawn_blocking(move || {
     let hash = PasswordHash::new(&hashed_pwd).map_err(|e| {
       error!("BUG: password hash invalid: {}", e);
-      Error::InvalidFormat
+      SecurityError::InvalidHashFormat
     })?;
 
     let res = Argon2::default().verify_password(plain_pwd.as_bytes(), &hash);
@@ -77,14 +93,14 @@ pub(crate) async fn verify(plain_pwd: String, hashed_pwd: String) -> Result<bool
       Err(password_hash::Error::Password) => Ok(false),
       Err(e) => {
         error!("Failed to verify password: {}", e);
-        Err(Error::FailedToVerifyPassword)
+        Err(SecurityError::FailedToVerifyPassword)
       }
     }
   })
   .await
   .map_err(|e| {
     error!("password verify worker join failed: {e}");
-    Error::PasswordWorkerJoinFailed(e.to_string())
+    SecurityError::PasswordWorkerJoinFailed(e.to_string())
   })?
 }
 
@@ -118,7 +134,7 @@ mod tests {
   use super::*;
 
   #[tokio::test]
-  async fn test_pwd() -> Result<()> {
+  async fn test_pwd() -> SecurityResult<()> {
     let plain_pwd = "2024.Fusion";
     let encrypted_pwd = generate_pwd(plain_pwd).await?;
     println!("The pwd is {}", encrypted_pwd);

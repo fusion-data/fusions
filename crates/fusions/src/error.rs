@@ -351,8 +351,6 @@ impl From<fusion_core::security::Error> for DataError {
     match value {
       SecError::TokenExpired => DataError::unauthorized("Token expired"),
       SecError::SignatureNotMatching => DataError::unauthorized("Signature not matching"),
-      SecError::InvalidPassword => DataError::unauthorized("Invalid password"),
-      SecError::FailedToVerifyPassword => DataError::unauthorized("Failed to verify password"),
       other => DataError::server_error(other.to_string()).with_source(other),
     }
   }
@@ -563,8 +561,13 @@ impl From<fusion_security::SecurityError> for DataError {
       SecurityError::TokenExpired => DataError::unauthorized("Token expired"),
       SecurityError::InvalidToken => DataError::unauthorized("Invalid token format"),
       SecurityError::OAuth(msg) => DataError::unauthorized(format!("OAuth error: {msg}")),
+      SecurityError::InvalidPassword => DataError::unauthorized("Invalid password"),
+      SecurityError::FailedToVerifyPassword => DataError::unauthorized("Failed to verify password"),
       SecurityError::Core(e) => DataError::from(e),
       SecurityError::Custom(msg) => DataError::server_error(msg),
+      // FailedToHashPassword / InvalidHashFormat / PasswordWorkerJoinFailed：
+      // 服务端基础设施级错误，统一 server_error + source 保留错误链。
+      other => DataError::server_error(other.to_string()).with_source(other),
     }
   }
 }

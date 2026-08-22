@@ -33,6 +33,10 @@ tracing = { workspace = true }
 oauth2 = { workspace = true, optional = true }
 openidconnect = { workspace = true, optional = true }
 reqwest = { workspace = true }
+# -- pwd（Argon2id 密码哈希，自 fusion-core::security::pwd 迁入）
+argon2 = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
 # -- aliyun-acs3 (feature gated)
 reqsign-core = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
