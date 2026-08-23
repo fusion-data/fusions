@@ -1,6 +1,10 @@
+---
+status: active
+version: v3  # 2026-07-30
+---
+
 # 前端工程约定（SPA 通用）
 
-> **Status**: active · **Version**: v3（2026-07-30）
 > **适用范围**：单页 Web 应用（SPA）的工程组织原则——route 职责边界、Provider 生命周期、远程数据分层、渲染纪律。**与具体框架无关**
 > **规范语言**：BCP 14（RFC 2119/8174）—— MUST、MUST NOT、SHOULD、SHOULD NOT、MAY
 > **本文不重述**：路由文件命名 → [naming-conventions §10.1](./naming-conventions.md#101-route-文件命名)；i18n 工程规范 → [i18n-conventions](./i18n-conventions.md)；质量门禁 → [SPECIFICATION §13](./SPECIFICATION.md#13-质量门禁通用)；fixtures 与开发数据策略 → [SPECIFICATION §4.4](./SPECIFICATION.md#44-开发数据策略)

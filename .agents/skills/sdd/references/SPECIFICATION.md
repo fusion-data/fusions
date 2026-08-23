@@ -1,6 +1,10 @@
-# SDD 规范（Spec-Driven Development）
+---
+status: active
+version: v2.3  # 2026-08-23（§4.1 控制字段载体收紧为 YAML front matter——blockquote 载体退役，门面体裁例外）
+compliance: L1  # 默认
+---
 
-> **Status**: active · **Version**: v2.2（2026-07-30）· **Compliance**: L1（默认）
+# SDD 规范（Spec-Driven Development）
 > **适用范围**：面向微服务或单体架构的跨边界交付；不假定编程语言、框架与仓库形态
 > **规范语言**：BCP 14（RFC 2119/8174）—— MUST、MUST NOT、SHOULD、SHOULD NOT、MAY
 > **定位**：SDD 文档集总纲，**业务与项目无关**。项目路径、命令、词表、迁移策略一律走项目 overlay（边界见 [sdd-overview §2](./sdd-overview.md#2-项目-overlay-边界)）
@@ -136,6 +140,9 @@
 规格文档结构：
 
 - 文档控制：Title、Status(draft|active|deprecated)、Owner、LastUpdated、Compliance(L0|L1|L2)
+  - 载体 = YAML front matter：承担控制字段义务的文档 MUST 以文件首行 `---` 围栏块承载控制字段，MUST NOT 以 blockquote 字段行（`> **Status**: ...`）承载（2026-08-23 收紧——双载体并存的实证教训 = 同一目录树跨批形式漂移、治理工具提取口径分裂）。front matter MUST 起于文件首行——非首行的围栏块不构成 front matter；键名 casing 同一文档集 SHOULD 统一（如 `status` / `last_updated` / `version`）；字段值的补充说明用 `#` 行内注释承载，MUST NOT 括号混入值；值含 `&` 等 YAML 特殊字符时 MUST 加引号。
+  - 门面体裁例外：`README.md` 与 Agent 规则文件（`CLAUDE.md` / `AGENTS.md`）被渲染工具 / harness 直接消费，MUST NOT 承载 front matter；其中承担控制字段义务的目录索引 README（§4.1.1 ② 类）以 blockquote 字段行承载——blockquote 载体仅保留此域。
+  - LastUpdated = 内容最后实质变更日；纯形式整理（载体迁移 / 重排版）SHOULD NOT 刷新。
 - 目标：Why、InScope、OutOfScope
 - 边界：BoundedContext、Producer(SoR)、Consumer、依赖强度（运行时强依赖/事实输入/治理/可选增强）
 - 契约：API/事件/Schema/错误码/权限码/策略字段映射（概念↔API↔策略）

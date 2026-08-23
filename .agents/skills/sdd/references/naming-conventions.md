@@ -1,6 +1,10 @@
+---
+status: active
+version: v3  # 2026-07-30
+---
+
 # 命名规范（Naming Conventions）
 
-> **Status**: active · **Version**: v3（2026-07-30）
 > **适用范围**：跨系统命名风格，覆盖产品规划、架构设计、研发实现、第三方对接与长期演进；支撑「概念层 ↔ API/schema 层 ↔ 策略契约层」的稳定映射
 > **规范语言**：BCP 14（RFC 2119/8174）—— MUST、MUST NOT、SHOULD、SHOULD NOT、MAY
 > **定位**：命名领域的规范性来源（[SPECIFICATION §1.3](./SPECIFICATION.md#13-优先级与规范性来源)）。本文承载**词表与清单**；「何为好名字」的判据见 [design-philosophy §9](./design-philosophy.md#9-命名判据)
