@@ -1,6 +1,6 @@
 ---
 status: active
-version: v2.3  # 2026-08-23（§4.1 控制字段载体收紧为 YAML front matter——blockquote 载体退役，门面体裁例外）
+version: v2.4  # 2026-08-27（§1.1 增目录级文档分工——目录管理规范收口 AGENTS.md、README 只做索引；§13.1 测试框架形态归位 stacks/ 适配层）
 compliance: L1  # 默认
 ---
 
@@ -58,6 +58,7 @@ compliance: L1  # 默认
 - 关键业务流程或技术流程（实体状态机、跨边界调用链、数据流、关键时序）MUST 用 mermaid 绘制；MUST NOT 用 ASCII art 或仅以散文替代可维护的图示。
 - 图示是规格的一部分而非装饰：流程语义变更时，维护者 MUST 同步更新对应 mermaid 图。
 - 面向 AI Agent / LLM 自动执行、审核或加载的规则 MUST 写成执行协议，格式见 [sdd-overview §3.3](./sdd-overview.md#33-agent-facing-规则检查)；MUST NOT 只用解释性段落表达可执行规则。
+- **目录级文档分工**：一个目录树的管理规范（使用规则 / 登记规则 / 生命周期协议）MUST 收口到该目录的 `AGENTS.md`（或项目 Agent 规则文件）；同目录 `README.md` MUST NOT 承载规范条款，只承担索引与说明（每个文件是什么、指路链接）。规范散落在多个 README 会形成平行真相源，且 README 面向人类浏览的定位会被执行协议破坏。（`AGENTS.md` 为[开放标准](https://agents.md/)，支持目录级嵌套、近者优先，与本条分工一致。）
 
 术语一致性、无重复定义、用语精准简练的规范见 §2（术语）与 §13（质量门禁 docs），本节不重述。
 
@@ -533,7 +534,7 @@ ReceiptEnvelope（最小）：
 
 ### 13.1 测试分层
 
-项目 SHOULD 采用分层测试架构，具体框架与命令由项目 overlay 固化：
+项目 SHOULD 采用分层测试架构。各层的测试框架**形态**由 `stacks/` 适配层承载（项目栈已建适配层时，见 [stacks/README](../stacks/README.md)）；框架版本、命令与设备形态由项目 overlay 固化：
 
 1. **Level 1 — 单元测试**：纯逻辑，无 DB/HTTP，快速反馈，开发时频繁运行。
 2. **Level 2 — API 契约测试**：通过真实 RPC / HTTP 请求验证服务是否严格遵守 proto 契约，覆盖正常路径和异常路径。
