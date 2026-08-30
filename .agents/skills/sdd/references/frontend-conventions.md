@@ -1,21 +1,21 @@
 ---
 status: active
-version: v3  # 2026-07-30
+version: v4  # 2026-08-30 增 §8 表单交互与敏感值（跨端通用，移动端双栈实证回流）；v3 2026-07-30
 ---
 
 # 前端工程约定（SPA 通用）
 
-> **适用范围**：单页 Web 应用（SPA）的工程组织原则——route 职责边界、Provider 生命周期、远程数据分层、渲染纪律。**与具体框架无关**
+> **适用范围**：单页 Web 应用（SPA）的工程组织原则——route 职责边界、Provider 生命周期、远程数据分层、渲染纪律；§8 表单交互与敏感值为跨端通用（Web / 移动端同守）。**与具体框架无关**
 > **规范语言**：BCP 14（RFC 2119/8174）—— MUST、MUST NOT、SHOULD、SHOULD NOT、MAY
 > **本文不重述**：路由文件命名 → [naming-conventions §10.1](./naming-conventions.md#101-route-文件命名)；i18n 工程规范 → [i18n-conventions](./i18n-conventions.md)；质量门禁 → [SPECIFICATION §13](./SPECIFICATION.md#13-质量门禁通用)；fixtures 与开发数据策略 → [SPECIFICATION §4.4](./SPECIFICATION.md#44-开发数据策略)
 > **栈落地形态**：React 19 + TanStack Router / Query + Ant Design 6 + Vite 的具体 API、插件顺序、组件约束见 [`../stacks/react-tanstack-antd.md`](../stacks/react-tanstack-antd.md)；移动端分栈（RN iOS 壳 / HarmonyOS ArkTS）见 [`../stacks/react-native-ios.md`](../stacks/react-native-ios.md) · [`../stacks/harmonyos-arkts.md`](../stacks/harmonyos-arkts.md)。本文只定原则与禁忌，不写框架 API
 
 ## 0. Agent 执行协议
 
-1. **Trigger**：新增或改动 route、Provider 装配、远程数据接入、组件用法、样式或金额 / 日期渲染时，MUST 加载本文。
+1. **Trigger**：新增或改动 route、Provider 装配、远程数据接入、组件用法、样式、金额 / 日期渲染，或表单交互（字段 label / 键盘 / 日期输入 / 弹层承载）与敏感值脱敏时，MUST 加载本文。
 2. **Load**：只读命中章节；每章末尾的「禁忌」小节 MUST 一并读取——多数回归缺陷出在那里。命中章节标注了栈落地形态时，MUST 一并加载对应 `stacks/` 适配层。
 3. **Apply**：本文定通用职责边界与禁忌；框架 API 与插件配置以 `stacks/` 适配层为准；baseUrl、CSRF、错误映射、包名与目录以项目 overlay 为准。
-4. **Conflict / Stop**：需要偏离固定 Provider 顺序、或需要在业务层引入 mock 数据时，MUST 停止并报告。
+4. **Conflict / Stop**：需要偏离固定 Provider 顺序、需要在业务层引入 mock 数据、或需要以 §8 禁忌形态交付表单 / 敏感值交互（如半屏弹层承载多字段键盘表单、文本输入承接日期值）时，MUST 停止并报告。
 5. **Output**：交付说明 MUST 点名改动的 route / Provider / query key，以及跑过的 lint、类型检查与构建结果。
 6. **MUST NOT**：MUST NOT 在业务运行时源码 import fixtures；MUST NOT 依赖 UI 库内部 DOM 类名做大范围样式覆盖。
 
@@ -244,3 +244,42 @@ MUST NOT 为了适配表格控件而要求后端改用 Offset 分页——分页
 - 新增大而全的全局样式表（feature 样式 co-locate 在 feature 内）。
 - 使用 UI 库内部选择器；需要语义插槽时使用官方提供的 className / style 字段。
 - 引入无统一前缀的自定义 CSS 变量。
+
+---
+
+## 8. 表单交互与敏感值（跨端通用）
+
+> 移动端双栈（RN iOS / HarmonyOS ArkTS）真机实证提炼的交互底线，Web 同守。本节只定**原则与禁忌**；键盘行为、弹层组件、日期选择器等**栈落地形态**见 [`../stacks/`](../stacks/README.md) 对应适配层。日期时间的**渲染**纪律在 §6.2，本节只管**输入**。label 视觉规格（字阶 / 颜色 / 布局位）属项目设计系统，不在本节。
+
+### 8.1 字段身份
+
+- 表单字段 MUST 有常驻 label——字段身份 MUST NOT 依赖 placeholder：placeholder 在有值后消失，字段即不可辨。
+- placeholder MAY 保留，语义降级为填写示例；口令、一次性定稿向导等例外语境由项目 overlay 显式登记，MUST NOT 逐屏自行豁免。
+
+### 8.2 键盘可达性与弹层承载
+
+- 软键盘在场时，聚焦输入框与提交动作排 MUST 保持可见、可达（避让 + 滚动，形态见 stacks）。
+- 无 return key 的数字键盘（decimal-pad 类）MUST 提供显式收起通道（收起浮条 / 滚动收起）；平台自带收起位时 SHOULD 直接采用（留验证证据），MUST NOT 自绘重复件。
+- 半屏弹层 / drawer MUST NOT 承载含软键盘输入的多字段表单——键盘压缩后可用高度不足，提交动作排出视口。承载形态 = 独立二级页、全屏表单页，或**该栈已实证键盘避让可靠**的底部对齐弹层（在对应 stacks 适配层登记）；未实证的弹层形态 MUST NOT 未经实机验证直接采用。
+- 模态内 MUST NOT 再开模态选择器（层级互盖 / 系统层焦点互斥，双端实证形态各异）——多字段表单页面化后，选择器为普通页上的单层模态。
+
+### 8.3 日期输入
+
+- 日期字段 MUST 用平台原生日期选择器（draft 滚动、确定才回写）；MUST NOT 以文本输入承接日期值——手输 `YYYY-MM-DD` 不可用且无法校验合法值。
+- 选择器「确定」动作 MUST 回写**并关闭**——只回写不关闭是通用缺陷（用户无法判断编辑是否生效）。
+
+### 8.4 敏感值与脱敏
+
+- 脱敏渲染 MUST 经单源入口分发（集中脱敏态 + 统一分发 helper，具体命名属项目 overlay）；组件内自写脱敏三元 = 违例（散落分支必漂移）。
+- 脱敏值（占位符）MUST NOT 进入表单模型——预填占位符经隐式转换（`Number()` 等）产出静默脏数据（实证形态：NaN 静默清空字段后保存成功）；编辑态预填 MUST 用原始值，表单录入面整体列入脱敏排除清单。
+- 命令式预拼串（非响应式重算填充）MUST 在脱敏态切换时联动重算——响应式注入面自动跟随，预拼面不会自动跟随。
+- 敏感面清单 MUST 逐渲染点盘点登记；正则类自动断言只证明**已枚举形态**被覆盖（无货币符号、异常精度等形态天然漏网），MUST NOT 以单一正则通过为覆盖证明。
+- 敏感值复制到剪贴板 MUST 限时清除，且切后台 MUST 立即清除。
+
+禁忌（MUST NOT）：
+
+- 以 placeholder 为唯一字段身份。
+- 键盘在场时聚焦框或提交动作不可见、不可达；数字键盘表单无收起通道。
+- 半屏弹层 / drawer 承载多字段键盘表单；模态内嵌模态选择器。
+- 文本输入承接日期值；日期选择器「确定」只回写不关闭。
+- 组件内自写脱敏三元；脱敏值预填表单；敏感值复制后无时限驻留剪贴板。

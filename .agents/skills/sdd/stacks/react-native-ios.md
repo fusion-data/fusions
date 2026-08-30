@@ -1,6 +1,6 @@
 ---
 status: active
-version: v2  # 2026-08-30
+version: v3  # 2026-08-30 增 §7 表单与键盘形态（frontend-conventions §8 落地）；v2 同日（oxc 工具链 / monorepo 形态）
 ---
 
 # 栈适配层：React Native + iOS
@@ -79,7 +79,17 @@ version: v2  # 2026-08-30
 
 ---
 
-## 6. 换栈映射判据
+## 7. 表单与键盘形态（对应 [frontend-conventions §8](../references/frontend-conventions.md#8-表单交互与敏感值跨端通用)）
+
+- **`InputAccessoryView` 在全屏 Modal / 新架构下不透出**（真机两轮实证；导航栏「完成」钮在键盘场景不显眼）——键盘收起 MUST 自绘浮条：监听键盘显隐取高度，`position: absolute` 贴键盘上沿渲染工具条，键盘不可见零渲染。
+- **iOS 数字键盘（decimal-pad 类）无 return key、系统无收起位**——显式收起通道 = 自绘浮条 + `keyboardDismissMode="on-drag"`（下滑滚动收起，iOS 惯例）。
+- **兄弟 Modal 层级互盖**：Modal 宿主内再开日期滚轮 Modal（兄弟节点）时点按无反应、父 Modal 关闭后子 Modal 才露出——多字段表单 MUST 页面化（独立二级页，返回回列表页），选择器成为普通页上的单层 Modal；MUST NOT 在表单 Modal 内再开选择器 Modal。
+- **键盘避让容器**：共享容器组件统一装配——`KeyboardAvoidingView`（iOS `behavior="padding"`）+ `keyboardShouldPersistTaps="handled"` + 键盘显隐监听对聚焦输入框 `measureInWindow` 判遮挡量滚动（聚焦框坐标由框架 API 现取，零逐框接线）。新表单 MUST 消费共享容器，MUST NOT 逐屏手写避让（存量手写面随接触面迁移，不强制回改）。
+- **日期选择**：社区 datetimepicker（`display="spinner"` 滚轮 + 取消 / 确定工具行，draft 滚动、确定回写并关闭，对应 frontend-conventions §8.3）。
+
+---
+
+## 8. 换栈映射判据
 
 换掉本栈时，被适配条款中**哪些要改、哪些不能改**：
 
@@ -88,5 +98,7 @@ version: v2  # 2026-08-30
 | 随机源缺失 MUST 显式失败或显式注入，MUST NOT 静默确定性降级 | 硬要求 | **不变** |
 | 桥面与协议面一致性 MUST 有机械校验 | 硬要求 | **不变** |
 | 页面级 ErrorBoundary（崩溃不殃及整 app） | 硬要求 | **不变** |
+| 键盘在场时聚焦框与提交动作可见可达（frontend-conventions §8.2 原则） | 硬要求 | **不变** |
+| `InputAccessoryView` 不透出 → 自绘浮条 / 兄弟 Modal 互盖 → 表单页面化 / KAV + measureInWindow 避让容器 / datetimepicker spinner | 形态 | **替换**为目标平台等价物（自绘件、页面路由、避让 API、选择器） |
 | Metro / Hermes / `.m` RCT 桥 / arm64 构建参数 / xcodebuild + CocoaPods | 形态 | **替换**为目标构建链与运行时 |
 | oxc 系 lint / format 工具链与配置单源复用 | 形态 | **替换**为目标语言 / 构建链的 lint / format 工具 |

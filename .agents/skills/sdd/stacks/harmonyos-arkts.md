@@ -1,6 +1,6 @@
 ---
 status: active
-version: v1  # 2026-08-27
+version: v2  # 2026-08-30 增 §5 表单与键盘形态（frontend-conventions §8 落地）；v1 2026-08-27
 ---
 
 # 栈适配层：HarmonyOS + ArkTS
@@ -70,7 +70,16 @@ version: v1  # 2026-08-27
 
 ---
 
-## 5. 换栈映射判据
+## 5. 表单与键盘形态（对应 [frontend-conventions §8](../references/frontend-conventions.md#8-表单交互与敏感值跨端通用)）
+
+- **`bindSheet` 承载含软键盘输入的表单 = 机制性缺陷**：键盘弹起时窗口可视区底边上提、sheet 视口被窗口裁剪；页面避让模式（OFFSET / RESIZE）对模态层零影响——模态层不参与页面压缩重排（固定高与自适应高均中招，实机实证）。含键盘输入的表单弹层 MUST 用 CustomDialog（自带整体位移避让）+ 内容 Scroll + maxHeight（内容超键盘态可用高时仍需弹层内滚动，否则底部动作排出视口）；纯选择 / 无键盘输入面弹层维持 bindSheet。
+- **系统 DatePickerDialog 与 CustomDialog 系统层焦点互斥**：弹层内 `showDatePickerDialog` 拉起时宿主弹层被连带关闭——弹层内日期选择 MUST 用 DatePicker 组件 inline 展开（draft 滚动 + 确定回写并关闭，对应 frontend-conventions §8.3）。
+- **数字键盘系统自带收起位**（右下「完成」键 + 键盘顶栏收起箭头）——SHOULD 直接采用系统位（留验证证据），MUST NOT 照搬 iOS 自绘收起浮条（端差，非可比缺陷）。
+- **收键盘 API**：`inputMethod.getController().hideTextInput()`；`FocusController.clearFocus()` 在金额输入 focus 态抛空引用，MUST NOT 作通用收键盘通道。切档 / 分段控制切换后 SHOULD 收键盘再露出被键盘遮蔽的表单行。
+
+---
+
+## 6. 换栈映射判据
 
 换掉本栈时，被适配条款中**哪些要改、哪些不能改**：
 
@@ -79,4 +88,6 @@ version: v1  # 2026-08-27
 | UI 分栈、跨端共享只走纯逻辑层与契约生成物 | 硬要求 | **不变**（平台矩阵本身属项目决策） |
 | E2E 断言以布局 dump / 属性断言为准，显式定位锚 | 硬要求 | **不变** |
 | 手写 JSON 消费 MUST 对齐 wire casing 并以 fixture 校验 | 硬要求 | **不变** |
+| 键盘在场时聚焦框与提交动作可见可达（frontend-conventions §8.2 原则） | 硬要求 | **不变** |
+| bindSheet 键盘缺陷 → CustomDialog + Scroll / inline DatePicker / 系统收起位 / `hideTextInput` | 形态 | **替换**为目标平台等价物（弹层组件、选择器、输入法 API） |
 | ArkTS / hvigor / napi `.so` / arkxtest / DevEco Testing Hypium（Python）/ `BY.*` 定位 API | 形态 | **替换**为目标平台等价物（测试框架、定位 API、构建链） |
