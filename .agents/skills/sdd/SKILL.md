@@ -48,7 +48,7 @@ metadata:
 | 新增或重命名概念 / 字段 / 枚举 / 权限码 / 路由；命名争议 | [naming-conventions](references/naming-conventions.md) | [react-tanstack-antd](stacks/react-tanstack-antd.md) §5（路由命名） |
 | 设计跨服务依赖、选通信协议、定复制边界、**边界信任模型** | [service-dependency-contract](references/service-dependency-contract.md)（信任模型 = §4.6） | [protobuf-connectrpc](stacks/protobuf-connectrpc.md) §2.2 |
 | 后端模块结构、新增 crate / 包、**字段类型落哪层**、handler 里写 SQL 类问题 | [backend-layering](references/backend-layering.md)（类型分层 = §3.5） | [rust-postgres](stacks/rust-postgres.md) |
-| 前端 route / Provider / 远程数据 / 组件用法 / 样式 / 金额与日期渲染 / **表单交互（label · 键盘 · 日期输入 · 弹层承载）与敏感值脱敏** | [frontend-conventions](references/frontend-conventions.md)（表单与敏感值 = §8） | [react-tanstack-antd](stacks/react-tanstack-antd.md) · 移动端分栈：[react-native-ios](stacks/react-native-ios.md)（表单键盘 = §7）/ [harmonyos-arkts](stacks/harmonyos-arkts.md)（表单键盘 = §5） |
+| 前端 route / Provider / 远程数据 / 组件用法 / 样式 / 金额与日期渲染 / **表单交互（label · 键盘 · 日期输入 · 弹层承载 · 预填意图）与敏感值脱敏** · **操作出口与异步反馈（弹层取消 / 死按钮 / 定时器生命周期）** · **控件组件层与规格单源（组件封装 / 逃逸口 / 跨端清单口径）** | [frontend-conventions](references/frontend-conventions.md)（表单与敏感值 = §8 · 出口与反馈 = §9 · 控件组件层 = §10） | [react-tanstack-antd](stacks/react-tanstack-antd.md) · 移动端分栈：[react-native-ios](stacks/react-native-ios.md)（表单键盘 = §7 · 布局与手势 = §6）/ [harmonyos-arkts](stacks/harmonyos-arkts.md)（表单键盘 = §5 · 控件封装 = §7） |
 | 多语言能力、命名空间、文案真相源归属、fallback | [i18n-conventions](references/i18n-conventions.md) | [react-tanstack-antd](stacks/react-tanstack-antd.md) §6 |
 | **判断某条规则该不该存在 / 是否重复 / 是否可验证 / 该放哪层** | [sdd-overview §2–3](references/sdd-overview.md#2-项目-overlay-边界)（overlay 边界 + 第一性原理审查） | — |
 | 项目技术栈不在 `stacks/` 表内 | [stacks/README §2](stacks/README.md#2-新增一个适配层)（新增适配层） | — |

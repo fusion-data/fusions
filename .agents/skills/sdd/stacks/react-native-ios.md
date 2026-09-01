@@ -1,6 +1,6 @@
 ---
 status: active
-version: v3  # 2026-08-30 增 §7 表单与键盘形态（frontend-conventions §8 落地）；v2 同日（oxc 工具链 / monorepo 形态）
+version: v4  # 2026-09-01 增 §4 桥 promise 落定与原生资源生命周期 / 补 §6 交互与布局形态 / §8 换栈表扩；v3 2026-08-30 增 §7
 ---
 
 # 栈适配层：React Native + iOS
@@ -69,6 +69,8 @@ version: v3  # 2026-08-30 增 §7 表单与键盘形态（frontend-conventions �
 - `.m` 桥导出面是手工维护的平行清单：tsc 不查 `.m`、构建门禁只验编译——导出面漂移的失败形态 = 端内 `TypeError: undefined is not a function`（**构建全绿**）。
 - 新增 / 变更内核方法 MUST 同步桥导出；桥面与协议面（IDL / manifest）的一致性 MUST 有机械校验（生成器或对拍），MUST NOT 依赖手工同步。
 - 壳层 MUST 为页面级内容装配 ErrorBoundary（resetKey 随路由切换重置）——单页崩溃 MUST NOT 白屏整 app。
+- **桥 promise MUST 兜底落定**（对应 [frontend-conventions §9.3](../references/frontend-conventions.md#93-异步落定与定时器生命周期)）：iOS 系统回调存在机型性不达（实证形态：语音识别 `finish` 后 final callback 不达——partial 正常回流但终态缺失）——收尾方 MUST 提供超时兜底出口，以已回流的部分结果落定。
+- **长驻原生资源单例复用 + 会话代次守卫**：引擎级资源（audio engine / 识别器类）每次新建 = 旧实例僵尸化，新会话输入通道拿不到数据（实证形态：第二次会话起恒报「无语音」类系统错误）——MUST 模块级单例复用 + 会话级重入防御（新会话前 cancel 旧任务、重装输入 tap、状态读写收敛主队列）；异步回调 MUST 携带会话代次（epoch），stale 回调全静默——旧会话的取消回调 MUST NOT 拆掉新会话资源或污染新会话状态。
 
 ---
 
@@ -79,6 +81,14 @@ version: v3  # 2026-08-30 增 §7 表单与键盘形态（frontend-conventions �
 
 ---
 
+## 6. 交互与布局形态
+
+- **ScrollView 自带默认 `flexGrow: 1`（双向坑）**：其一，非列表位滚动面（横向装饰滚动行）在纵向布局里吃掉全部剩余高度，`minHeight` 拦不住（实证形态：横向胶囊行与后续卡片间数倍空白）——MUST 显式 `flexGrow: 0`；其二（反向），主列表滚动面的 `contentContainerStyle` MUST 保底 `flexGrow: 1` 且 MUST NOT `flex: 1`（压缩到视口高 = 判定不可滚）。两向同源：flex 默认值不区分「装饰滚动行」与「主滚动面」，意图 MUST 显式声明。
+- **Pressable 默认保留区小**：按压后手指拖出组件边界即触发 `onPressOut`——「拖出取消」类手势（上滑取消等）来不及呈现取消提示即被误触发。长按拖动取消类交互 MUST 扩 `pressRetentionOffset` 保留区（取值属项目 overlay）。
+- **Modal 无系统关闭位**：iOS Modal 非 slide-to-dismiss、遮罩点击默认不关闭——弹层显式取消出口（[frontend-conventions §9.1](../references/frontend-conventions.md#91-操作出口完备)）在 RN 侧 MUST 自带按钮位，MUST NOT 指望系统手势。
+
+---
+
 ## 7. 表单与键盘形态（对应 [frontend-conventions §8](../references/frontend-conventions.md#8-表单交互与敏感值跨端通用)）
 
 - **`InputAccessoryView` 在全屏 Modal / 新架构下不透出**（真机两轮实证；导航栏「完成」钮在键盘场景不显眼）——键盘收起 MUST 自绘浮条：监听键盘显隐取高度，`position: absolute` 贴键盘上沿渲染工具条，键盘不可见零渲染。
@@ -86,6 +96,7 @@ version: v3  # 2026-08-30 增 §7 表单与键盘形态（frontend-conventions �
 - **兄弟 Modal 层级互盖**：Modal 宿主内再开日期滚轮 Modal（兄弟节点）时点按无反应、父 Modal 关闭后子 Modal 才露出——多字段表单 MUST 页面化（独立二级页，返回回列表页），选择器成为普通页上的单层 Modal；MUST NOT 在表单 Modal 内再开选择器 Modal。
 - **键盘避让容器**：共享容器组件统一装配——`KeyboardAvoidingView`（iOS `behavior="padding"`）+ `keyboardShouldPersistTaps="handled"` + 键盘显隐监听对聚焦输入框 `measureInWindow` 判遮挡量滚动（聚焦框坐标由框架 API 现取，零逐框接线）。新表单 MUST 消费共享容器，MUST NOT 逐屏手写避让（存量手写面随接触面迁移，不强制回改）。
 - **日期选择**：社区 datetimepicker（`display="spinner"` 滚轮 + 取消 / 确定工具行，draft 滚动、确定回写并关闭，对应 frontend-conventions §8.3）。
+- **键盘布局属性 = `keyboardType`**（对应 frontend-conventions §8.2）：数值字段 `number-pad` / `decimal-pad`；字符过滤（`maxLength` + 过滤函数）只拦非法输入，MUST NOT 视为键盘布局切换。
 
 ---
 
@@ -97,8 +108,10 @@ version: v3  # 2026-08-30 增 §7 表单与键盘形态（frontend-conventions �
 | --- | --- | --- |
 | 随机源缺失 MUST 显式失败或显式注入，MUST NOT 静默确定性降级 | 硬要求 | **不变** |
 | 桥面与协议面一致性 MUST 有机械校验 | 硬要求 | **不变** |
+| 桥 promise 兜底落定 / 长驻原生资源单例复用 + 会话代次守卫（frontend-conventions §9.3 原则） | 硬要求 | **不变** |
 | 页面级 ErrorBoundary（崩溃不殃及整 app） | 硬要求 | **不变** |
 | 键盘在场时聚焦框与提交动作可见可达（frontend-conventions §8.2 原则） | 硬要求 | **不变** |
 | `InputAccessoryView` 不透出 → 自绘浮条 / 兄弟 Modal 互盖 → 表单页面化 / KAV + measureInWindow 避让容器 / datetimepicker spinner | 形态 | **替换**为目标平台等价物（自绘件、页面路由、避让 API、选择器） |
+| ScrollView `flexGrow` 双向显式声明 / `pressRetentionOffset` 保留区 / Modal 自带取消出口 | 形态 | **替换**为目标平台等价物（滚动容器默认值、按压保留区 API、模态关闭惯例） |
 | Metro / Hermes / `.m` RCT 桥 / arm64 构建参数 / xcodebuild + CocoaPods | 形态 | **替换**为目标构建链与运行时 |
 | oxc 系 lint / format 工具链与配置单源复用 | 形态 | **替换**为目标语言 / 构建链的 lint / format 工具 |

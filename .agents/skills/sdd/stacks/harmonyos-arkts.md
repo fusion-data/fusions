@@ -1,6 +1,6 @@
 ---
 status: active
-version: v2  # 2026-08-30 增 §5 表单与键盘形态（frontend-conventions §8 落地）；v1 2026-08-27
+version: v3  # 2026-09-01 增 §5 键盘布局条 / §7 控件封装形态 / §6 换栈表扩；v2 2026-08-30 增 §5
 ---
 
 # 栈适配层：HarmonyOS + ArkTS
@@ -76,6 +76,7 @@ version: v2  # 2026-08-30 增 §5 表单与键盘形态（frontend-conventions �
 - **系统 DatePickerDialog 与 CustomDialog 系统层焦点互斥**：弹层内 `showDatePickerDialog` 拉起时宿主弹层被连带关闭——弹层内日期选择 MUST 用 DatePicker 组件 inline 展开（draft 滚动 + 确定回写并关闭，对应 frontend-conventions §8.3）。
 - **数字键盘系统自带收起位**（右下「完成」键 + 键盘顶栏收起箭头）——SHOULD 直接采用系统位（留验证证据），MUST NOT 照搬 iOS 自绘收起浮条（端差，非可比缺陷）。
 - **收键盘 API**：`inputMethod.getController().hideTextInput()`；`FocusController.clearFocus()` 在金额输入 focus 态抛空引用，MUST NOT 作通用收键盘通道。切档 / 分段控制切换后 SHOULD 收键盘再露出被键盘遮蔽的表单行。
+- **`inputFilter` 只滤字符、不切键盘布局**（对应 [frontend-conventions §8.2](../references/frontend-conventions.md#82-键盘可达性与弹层承载)）：数值字段 MUST `inputType`（`InputType.NUMBER_DECIMAL` / `InputType.NUMBER`）声明键盘布局；`inputFilter` 正则只拦非法输入，键盘仍为全键盘（实证形态：全量数值字段只设过滤，用户逐字段面对全键盘）。
 
 ---
 
@@ -90,4 +91,17 @@ version: v2  # 2026-08-30 增 §5 表单与键盘形态（frontend-conventions �
 | 手写 JSON 消费 MUST 对齐 wire casing 并以 fixture 校验 | 硬要求 | **不变** |
 | 键盘在场时聚焦框与提交动作可见可达（frontend-conventions §8.2 原则） | 硬要求 | **不变** |
 | bindSheet 键盘缺陷 → CustomDialog + Scroll / inline DatePicker / 系统收起位 / `hideTextInput` | 形态 | **替换**为目标平台等价物（弹层组件、选择器、输入法 API） |
+| ArkUI `Button` 默认形态陷阱 → `ButtonType.Normal` + 显式高 / `@Param` 避让基类保留名 / 壳宽显式跟随 / `bindPopup` 长按气泡 | 形态 | **替换**为目标平台等价物（平台控件默认值、属性避让规则、气泡组件） |
 | ArkTS / hvigor / napi `.so` / arkxtest / DevEco Testing Hypium（Python）/ `BY.*` 定位 API | 形态 | **替换**为目标平台等价物（测试框架、定位 API、构建链） |
+
+---
+
+## 7. 控件封装形态（对应 [frontend-conventions §10](../references/frontend-conventions.md#10-控件组件层与跨端清单口径跨端通用)）
+
+本栈平台控件默认值陷阱与薄组件层封装要点：
+
+- **ArkUI `Button` 默认形态陷阱**：默认类型 Capsule 的圆角强制 = 高 / 2（`borderRadius` 被忽略）、默认高 40vp——自定义圆角 / 标准控件高 MUST `ButtonType.Normal` + 显式 `.height(token)`。按压反馈 `stateEffect` 与自定义 `backgroundColor` / `borderRadius` 共存时按压态可见（实证登记，避免重查；不可见则回退自绘按压态，验收语义 = 按压态可见）。
+- **CustomComponent props 避让基类保留名**：`@Param` 与基类保留属性（如 `enabled`）同名编译冲突——语义近名 props MUST 改名（如 `isEnabled`）。`@Param` 白名单天然限制可透传属性面——frontend-conventions §10.1 的逃逸口约束在本栈编译期成立，封装层 SHOULD 显式登记这一差异。
+- **封装组件壳宽跟随**：内部固有宽不自动填充外部约束（实证形态：迁移首装后按钮宽度塌缩）——组件壳 MUST 显式 `.width('100%')`，外部 `width` / `layoutWeight` 约束壳、内部全宽。
+- **`Button` 文本即无障碍朗读文本**（对照 RN `accessibilityLabel` 通道的平台差异）——文字按钮封装层无需额外标签通道，跨端组件契约 SHOULD 显式登记该端差。
+- **长按锚定气泡 = `bindPopup`**：内建带箭头气泡与自绘锚定 Popover 同构，MUST 优先内建；纯选择 / 无键盘输入的底部弹层维持 `bindSheet`（键盘面规则见 §5）。
