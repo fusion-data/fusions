@@ -2,6 +2,15 @@
 
 Fusion Security 是 Fusion-Data 平台的安全模块，提供认证、授权和 OAuth 集成功能。
 
+## 微信认证原语（feature `with-wechat`）
+
+微信开放平台换码认证原语（`WechatAuthClient`）——两个换码面：
+
+- **OAuth2 面**（`code_to_session`）：`GET /sns/oauth2/access_token`——开放平台「移动应用 / 网站应用」授权码换取（`WechatCodeSession`：access_token + openid + unionid 可选）；
+- **小程序面**（`jscode_to_session`）：`GET /sns/jscode2session`——微信小程序 `wx.login` code 换取（`MpSession`：openid 恒有 + unionid 结构性可选；**`session_key` 原语层解析即弃**——不入返回值 / 日志 / 持久面）。
+
+errcode 两类映射（消费方据此分流 unauthenticated / unavailable）：`Invalid`（40029 / 40013 / 40125 / 40226 等请求侧错误）/ `Unavailable`（网络不可达 / HTTP 非 200 / 响应畸形 / 系统忙 -1 / **API 分钟配额 45011**）。多凭据面编排与锚定策略断言在 fusion-weixin crate。
+
 ## OAuth 集成示例
 
 本项目包含 Gitee 和 GitHub OAuth 2.0 登录的完整示例代码。

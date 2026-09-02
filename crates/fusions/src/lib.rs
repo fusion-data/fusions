@@ -51,6 +51,10 @@ pub use fusion_rpc as rpc;
 /// 安全认证模块 (fusion-security)
 pub use fusion_security as security;
 
+#[cfg(feature = "weixin")]
+/// 微信登录编排模块 (fusion-weixin)
+pub use fusion_weixin as weixin;
+
 #[cfg(feature = "web")]
 /// Web 框架模块 (fusion-web)
 pub use fusion_web as web;

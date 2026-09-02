@@ -573,6 +573,28 @@ impl From<fusion_security::SecurityError> for DataError {
 }
 
 // ==========================================
+// fusion-weixin
+// ==========================================
+
+#[cfg(feature = "weixin")]
+impl From<fusion_weixin::WeixinError> for DataError {
+  fn from(value: fusion_weixin::WeixinError) -> Self {
+    use fusion_weixin::WeixinError;
+    match value {
+      // 换码被拒（code 无效 / 凭据无效等请求侧错误）→ 401（消费方统一
+      // 「第三方凭证无效或已过期」族文案）。
+      WeixinError::Invalid { .. } => DataError::unauthorized(value.to_string()),
+      // 出站依赖不可用（通道未配置 / 网络不可达 / 系统忙 / 分钟配额）→ 503（瞬态）。
+      WeixinError::Unavailable { .. } => {
+        DataError::internal(codes::SERVICE_UNAVAILABLE, value.to_string(), Some(Box::new(value)))
+      }
+      // unionid 强锚失败（配置缺陷）→ 服务端错误（非用户侧可修复）。
+      WeixinError::MissingUnionid => DataError::server_error(value.to_string()).with_source(value),
+    }
+  }
+}
+
+// ==========================================
 // fusion-ai
 // ==========================================
 

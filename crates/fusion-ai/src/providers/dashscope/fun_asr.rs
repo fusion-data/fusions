@@ -103,7 +103,7 @@ impl FunAsrRealtime {
 
   /// STT 一等构造（fusion-ai-de-rig.md §4.4 #2）—— credentials + 显式 region + model。
   ///
-  /// 消费方（如 hetuos stt_route）MUST 走这里，MUST NOT 先造 chat 侧
+  /// STT 消费路径（语音转写接入方）MUST 走这里，MUST NOT 先造 chat 侧
   /// `LlmProviderConfig::Qwen` 再解构丢弃借道。region 字符串归一经
   /// [`crate::llm::parse_dashscope_region`]（唯一真相源）；api_key 非空校验。
   /// region 保持显式传入（沿 `new` 的防呆口径：「忘了设地域」不可拼写）。

@@ -29,8 +29,8 @@ cargo test --workspace --all-targets --all-features
 **§7「框架业务无关（消费方标识符零泄漏）」是最高频红线**——fusions 是业务无关 lib/framework，可被多个项目以 path / git / submodule 等任一方式依赖。框架代码 / 默认值 / 日志 metric / 测试 fixture / 注释 doc MUST NOT 硬编码任何消费方标识符（产品名 / 服务名 / proto 包名 / cookie 名 / 库名 / 角色码 / metric 名等）。改完跑该节验证锚点：
 
 ```bash
-grep -rniE 'hetuos|hetu-creative|hylx|careos' --include='*.rs' --include='*.toml' --include='*.md' .
-# MUST 零命中（hylx / careos 是历史消费方名）
+grep -rniE 'hetuos|hetu-creative|hylx|careos|chiying|hetu-chiying|gongshu' --include='*.rs' --include='*.toml' --include='*.md' . | grep -v '^./target' | grep -v 'grep -rniE' | grep -v 'docs/exec-plans/archived/' | grep -vE '^Cargo\.toml:[0-9]+:authors'
+# MUST 零命中（模式内词均为消费方名）；豁免 = 锚点命令行自身 / 归档 exec-plan 历史叙述 / 根 Cargo.toml authors 行——详见 framework-conventions §7 验证锚点注
 ```
 
 ## 文档边界

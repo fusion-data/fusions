@@ -220,7 +220,7 @@ let router = Router::new()
 
 ```rust
 pub struct TrustedSubject {
-    /// 谁为这个主体背书，进日志 / 审计，如 "hetu-careos:system"
+    /// 谁为这个主体背书，进日志 / 审计，如 "consumer-app:system"
     pub principal: String,
     /// 向下游注入的身份 header，如 [("x-tenant-id", "3")]。
     /// 由验证方从它验过的东西推导，AuthLayer 绝不自己发明。
