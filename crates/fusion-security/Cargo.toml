@@ -19,6 +19,9 @@ with-oauth = ["with-jwt", "dep:oauth2"]
 with-openid = ["with-jwt", "dep:openidconnect"]
 # 阿里云 ACS3-HMAC-SHA256 签名（基于 opendal-reqsign 的 SignRequest / ProvideCredential trait）
 with-aliyun-acs3 = ["dep:reqsign-core", "dep:bytes", "dep:http", "dep:percent-encoding", "dep:chrono", "dep:uuid", "dep:zeroize"]
+# 微信开放平台 OAuth2 认证原语（r414——换码 HTTP 面 + errcode 映射；
+# 双凭据面编排与 unionid 强制断言在 fusion-weixin crate）
+with-wechat = []
 
 [dependencies]
 fusion-common = { workspace = true }
@@ -49,4 +52,4 @@ zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
 dotenvy = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "net", "io-util"] }

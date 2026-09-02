@@ -40,6 +40,7 @@ fusion-web = { version = "0.3.0", path = "crates/fusion-web" }
 fusion-rpc = { version = "0.3.0", path = "crates/fusion-rpc" }
 fusion-ai = { version = "0.3.0", path = "crates/fusion-ai" }
 fusion-storage = { version = "0.3.0", path = "crates/fusion-storage" }
+fusion-weixin = { version = "0.3.0", path = "crates/fusion-weixin" }
 fusions = { version = "0.3.0", path = "crates/fusions" }
 # -- projects end - fusion
 

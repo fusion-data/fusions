@@ -1,0 +1,22 @@
+[package]
+name = "fusion-weixin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fusion-security = { workspace = true, features = ["with-wechat"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "net", "io-util"] }
