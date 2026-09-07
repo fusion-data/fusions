@@ -64,6 +64,12 @@ impl LlmChatProvider for QwenChatProvider {
   async fn chat_complete(&self, req: ChatCompletionRequest) -> Result<ChatCompletionResponse, LlmError> {
     self.transport.chat_complete(LlmProviderId::Qwen, &self.default_model, req).await
   }
+
+  /// Responses API 原生形态（DashScope 已支持；thinking 经 reasoning.effort=none
+  /// 关闭——官方口径，P5b 真机验证）。
+  async fn responses_complete(&self, req: ChatCompletionRequest) -> Result<ChatCompletionResponse, LlmError> {
+    self.transport.responses_complete(LlmProviderId::Qwen, &self.default_model, req).await
+  }
 }
 
 #[cfg(test)]

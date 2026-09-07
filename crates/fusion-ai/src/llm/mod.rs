@@ -115,14 +115,27 @@ pub struct ChatMessage {
   pub content: String,
   /// 模型生成的 function call 列表（OpenAI 兼容 `tool_calls`），仅 assistant role 携带
   pub tool_calls: Vec<ToolCall>,
+  /// tool 角色回执的关联 id（OpenAI 兼容 `tool_call_id`）——与 assistant `tool_calls[i].id`
+  /// 配对。Responses API 的 `function_call_output.call_id` 同源。None = 无关联
+  /// （历史调用方 / 非 tool 消息）。
+  pub tool_call_id: Option<String>,
 }
 
 impl ChatMessage {
   pub fn system(content: impl Into<String>) -> Self {
-    Self { role: ChatRole::System, content: content.into(), tool_calls: Vec::new() }
+    Self { role: ChatRole::System, content: content.into(), tool_calls: Vec::new(), tool_call_id: None }
   }
   pub fn user(content: impl Into<String>) -> Self {
-    Self { role: ChatRole::User, content: content.into(), tool_calls: Vec::new() }
+    Self { role: ChatRole::User, content: content.into(), tool_calls: Vec::new(), tool_call_id: None }
+  }
+  /// tool 角色回执（`tool_call_id` 与 assistant tool_calls[].id 配对）。
+  pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+    Self {
+      role: ChatRole::Tool,
+      content: content.into(),
+      tool_calls: Vec::new(),
+      tool_call_id: Some(tool_call_id.into()),
+    }
   }
 }
 
@@ -243,6 +256,16 @@ pub trait LlmChatProvider: Send + Sync {
   fn default_model(&self) -> &str;
 
   async fn chat_complete(&self, req: ChatCompletionRequest) -> Result<ChatCompletionResponse, LlmError>;
+
+  /// OpenAI 兼容 Responses API 形态（`<base_url>/responses`）。默认实现回退
+  /// [`chat_complete`](Self::chat_complete)——未实现该形态的 provider 零改动、语义
+  /// 降级为 chat completions；DeepSeek / DashScope(Qwen) 已原生支持并 override。
+  /// 业务层自选形态：调本方法即 Responses（工具循环回执经
+  /// `function_call_output.call_id` 配对，规避 chat completions 方言的
+  /// `tool_call_id` 严格校验差异）。
+  async fn responses_complete(&self, req: ChatCompletionRequest) -> Result<ChatCompletionResponse, LlmError> {
+    self.chat_complete(req).await
+  }
 }
 
 /// Boxed alias —— factory 输出 + caller 持有的统一类型。

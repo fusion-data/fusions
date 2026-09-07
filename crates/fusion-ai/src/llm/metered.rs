@@ -331,6 +331,20 @@ impl LlmChatProvider for MeteredLlmProvider {
     }
     resp
   }
+
+  /// Responses 形态透传 inner（计量与 `chat_complete` 同构——两形态的 usage 语义一致）。
+  async fn responses_complete(&self, req: ChatCompletionRequest) -> Result<ChatCompletionResponse, LlmError> {
+    let started = std::time::Instant::now();
+    let resp = self.inner.responses_complete(req).await;
+    if let Ok(r) = &resp
+      && let Some(u) = &r.usage
+    {
+      let latency_ms = i64::try_from(started.elapsed().as_millis()).ok();
+      let ev = AiUsageEvent::from_ctx_tokens(&self.ctx, u, Outcome::Success, Utc::now(), latency_ms);
+      self.sink.record(ev);
+    }
+    resp
+  }
 }
 
 #[cfg(test)]
@@ -366,7 +380,12 @@ mod tests {
     fn ok(usage: Option<TokenUsage>) -> Arc<Self> {
       let r = ChatCompletionResponse {
         model: "mock-model".into(),
-        message: ChatMessage { role: ChatRole::Assistant, content: "ok".into(), tool_calls: vec![] },
+        message: ChatMessage {
+          role: ChatRole::Assistant,
+          content: "ok".into(),
+          tool_calls: vec![],
+          tool_call_id: None,
+        },
         usage,
         provider_metadata: serde_json::json!({}),
       };

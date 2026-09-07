@@ -134,6 +134,182 @@ impl OpenAiCompatTransport {
       resp.json().await.map_err(|e| LlmError::ResponseParse { provider, message: e.to_string() })?;
     parsed.into_response(provider, default_model, &req).ok_or(LlmError::NoChoice { provider })
   }
+
+  /// 调 `<base_url>/responses`（OpenAI 兼容 Responses API），把规范形请求翻成 Responses
+  /// wire、响应回翻 [`ChatCompletionResponse`]。DeepSeek / DashScope(Qwen) 已支持该形态；
+  /// 工具循环的回执配对经 `function_call_output.call_id`（源自规范形 `tool_call_id`）。
+  pub async fn responses_complete(
+    &self,
+    provider: LlmProviderId,
+    default_model: &str,
+    req: ChatCompletionRequest,
+  ) -> Result<ChatCompletionResponse, LlmError> {
+    use crate::providers::openai_compatible::responses_api as responses;
+    use crate::providers::openai_compatible::types as core;
+
+    let model = req.model.clone().unwrap_or_else(|| default_model.to_string());
+    let history = chat_history_to_core(&req.messages)
+      .map_err(|m| LlmError::ConfigInvalid(provider, format!("responses request build: {m}")))?;
+    let tool_choice = req.tool_choice.as_ref().map(|tc| match tc {
+      ToolChoice::Auto => core::ToolChoice::Auto,
+      ToolChoice::Required => core::ToolChoice::Required,
+      ToolChoice::Function(name) => core::ToolChoice::Specific { function_names: vec![name.clone()] },
+    });
+    let tools = req
+      .tools
+      .iter()
+      .map(|t| core::ToolDefinition {
+        name: t.name.clone(),
+        parameters: t.parameters.clone(),
+        description: t.description.clone().unwrap_or_default(),
+      })
+      .collect::<Vec<_>>();
+    let request = responses::CompletionRequest::from_history(
+      model,
+      req.system_prompt.clone().filter(|s| !s.is_empty()),
+      history,
+      tools,
+      tool_choice,
+      req.temperature.map(f64::from),
+      None,
+      Some(reasoning_param(provider)),
+    )
+    .map_err(|e| LlmError::ConfigInvalid(provider, format!("responses request build: {e}")))?;
+
+    let http = self.http()?;
+    let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
+    let mut builder = http.post(&url).bearer_auth(&self.api_key).json(&request);
+    if let Some(timeout) = req.timeout {
+      builder = builder.timeout(timeout);
+    }
+    for (k, v) in &self.extra_headers {
+      builder = builder.header(k, v);
+    }
+    let resp = builder.send().await.map_err(|e| LlmError::Transport { provider, message: e.to_string() })?;
+    let status = resp.status();
+    if !status.is_success() {
+      let text = resp.text().await.unwrap_or_default();
+      return Err(LlmError::Http { provider, status: status.as_u16(), message: truncate(&text, 1024) });
+    }
+
+    let parsed: responses::CompletionResponse =
+      resp.json().await.map_err(|e| LlmError::ResponseParse { provider, message: e.to_string() })?;
+    responses_to_chat(provider, default_model, req.model.as_deref(), parsed)
+  }
+}
+
+/// 规范形消息历史 → Responses 客户端的 core 消息（tool 回执以 user 内容的 ToolResult
+/// 承载，`call_id` 即规范形 `tool_call_id`）。
+fn chat_history_to_core(
+  messages: &[ChatMessage],
+) -> Result<Vec<crate::providers::openai_compatible::types::Message>, String> {
+  use crate::providers::openai_compatible::types as core;
+
+  let mut out = Vec::with_capacity(messages.len());
+  for m in messages {
+    match m.role {
+      ChatRole::System => out.push(core::Message::system(m.content.clone())),
+      ChatRole::User => out.push(core::Message::user(m.content.clone())),
+      ChatRole::Assistant => {
+        if m.tool_calls.is_empty() {
+          out.push(core::Message::assistant(m.content.clone()));
+          continue;
+        }
+        let mut content = Vec::with_capacity(m.tool_calls.len() + 1);
+        if !m.content.is_empty() {
+          content.push(core::AssistantContent::text(m.content.clone()));
+        }
+        for tc in &m.tool_calls {
+          // 配对键放 call_id（function_call item 的 call_id）；item id 缺 vendor 分配值时
+          // 以 call_id 兜底（DashScope/DeepSeek 均要求 call_id，item id 可自洽）。
+          let call_id = tc.id.clone().unwrap_or_default();
+          content.push(core::AssistantContent::ToolCall(
+            core::ToolCall::new(
+              call_id.clone(),
+              core::ToolFunction {
+                name: tc.name.clone(),
+                arguments: serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Object(Default::default())),
+              },
+            )
+            .with_call_id(call_id),
+          ));
+        }
+        out.push(core::Message::Assistant {
+          id: None,
+          content: core::OneOrMany::many(content).map_err(|_| "assistant message content empty")?,
+        });
+      }
+      ChatRole::Tool => {
+        let call_id = m
+          .tool_call_id
+          .clone()
+          .ok_or_else(|| "tool message missing tool_call_id (Responses API requires call_id)".to_string())?;
+        out.push(core::Message::User {
+          content: core::OneOrMany::one(core::UserContent::ToolResult(core::ToolResult {
+            id: call_id.clone(),
+            call_id: Some(call_id),
+            content: core::OneOrMany::one(core::ToolResultContent::text(m.content.clone())),
+          })),
+        });
+      }
+    }
+  }
+  Ok(out)
+}
+
+/// Responses 响应 → 规范形（text 拼接 Output::Message；tool_calls 取 `call_id` 作配对键）。
+fn responses_to_chat(
+  provider: LlmProviderId,
+  default_model: &str,
+  requested_model: Option<&str>,
+  parsed: crate::providers::openai_compatible::responses_api::CompletionResponse,
+) -> Result<ChatCompletionResponse, LlmError> {
+  use crate::providers::openai_compatible::types as core;
+
+  let mut content = String::new();
+  let mut tool_calls = Vec::new();
+  for item in parsed.output {
+    for ac in Vec::<core::AssistantContent>::from(item) {
+      match ac {
+        core::AssistantContent::Text(t) => content.push_str(&t.text),
+        core::AssistantContent::ToolCall(tc) => tool_calls.push(ToolCall {
+          id: Some(tc.call_id.filter(|s| !s.is_empty()).unwrap_or(tc.id)),
+          name: tc.function.name,
+          arguments: tc.function.arguments.to_string(),
+        }),
+        _ => {}
+      }
+    }
+  }
+  if content.is_empty() && tool_calls.is_empty() {
+    return Err(LlmError::NoChoice { provider });
+  }
+  let usage = parsed.usage.map(|u| TokenUsage {
+    prompt_tokens: u.input_tokens as u32,
+    completion_tokens: u.output_tokens as u32,
+    total_tokens: u.total_tokens as u32,
+    cached_input_tokens: u.input_tokens_details.map(|d| d.cached_tokens as u32).unwrap_or(0),
+  });
+  Ok(ChatCompletionResponse {
+    model: requested_model.map(str::to_string).unwrap_or_else(|| default_model.to_string()),
+    message: ChatMessage { role: ChatRole::Assistant, content, tool_calls, tool_call_id: None },
+    usage,
+    provider_metadata: serde_json::json!({
+      "object": "chat.completion.via_responses",
+      "response_id": parsed.id,
+      "status": format!("{:?}", parsed.status),
+    }),
+  })
+}
+
+/// 思考模式关闭参数（Responses 形态）：DeepSeek 无 `none` 档取 `minimal`（P5b 真机
+/// 口径），DashScope 官方口径 `none`；其余 provider 不注入。
+fn reasoning_param(provider: LlmProviderId) -> Value {
+  match provider {
+    LlmProviderId::DeepSeek => serde_json::json!({ "reasoning": { "effort": "minimal" } }),
+    LlmProviderId::Qwen => serde_json::json!({ "reasoning": { "effort": "none" } }),
+    _ => serde_json::json!({}),
+  }
 }
 
 /// 构造 OpenAI 兼容请求 body。
@@ -161,6 +337,10 @@ pub fn build_request_body(default_model: &str, req: &ChatCompletionRequest) -> V
       if let Some(obj) = entry.as_object_mut() {
         obj.insert("tool_calls".into(), Value::Array(tcs));
       }
+    }
+    // tool 回执的配对键（OpenAI 兼容必填；缺失会被严格校验的 vendor 400 拒绝）。
+    if let (Some(id), Some(obj)) = (m.tool_call_id.as_ref().filter(|s| !s.is_empty()), entry.as_object_mut()) {
+      obj.insert("tool_call_id".into(), Value::String(id.clone()));
     }
     messages.push(entry);
   }
@@ -400,7 +580,7 @@ impl WireChatCompletionResponse {
 
     Some(ChatCompletionResponse {
       model,
-      message: ChatMessage { role: role_parsed, content: content.unwrap_or_default(), tool_calls },
+      message: ChatMessage { role: role_parsed, content: content.unwrap_or_default(), tool_calls, tool_call_id: None },
       usage,
       provider_metadata: Value::Object(metadata),
     })
@@ -410,6 +590,7 @@ impl WireChatCompletionResponse {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::providers::openai_compatible::types as core;
 
   fn sample_req() -> ChatCompletionRequest {
     ChatCompletionRequest {
@@ -446,6 +627,70 @@ mod tests {
     req.model = None;
     let body = build_request_body("fallback-model", &req);
     assert_eq!(body["model"], "fallback-model");
+  }
+
+  /// tool 回执的配对键 MUST 序列化（chat completions 方言）；缺失会被严格校验的
+  /// vendor 以 400 `missing field tool_call_id` 拒绝（DeepSeek 实证 2026-09-07）。
+  #[test]
+  fn build_request_body_serializes_tool_call_id() {
+    let mut req = sample_req();
+    req.messages.push(ChatMessage::tool("call_7", "tool output"));
+    let body = build_request_body("default", &req);
+    let tool_msg = &body["messages"][2];
+    assert_eq!(tool_msg["role"], "tool");
+    assert_eq!(tool_msg["tool_call_id"], "call_7");
+    // 无关联消息（None / 空）不携带该键——旧调用方 wire 形态不变。
+    assert!(body["messages"][1].get("tool_call_id").is_none());
+  }
+
+  /// 规范形 → Responses core 消息：tool 回执翻成 user 侧 ToolResult（call_id 配对），
+  /// assistant tool_calls 的配对键落 call_id；缺 tool_call_id 的 tool 消息显式报错
+  /// （Responses 方言 function_call_output.call_id 必填）。
+  #[test]
+  fn chat_history_to_core_pairs_tool_receipts_by_call_id() {
+    let history = vec![
+      ChatMessage {
+        role: ChatRole::Assistant,
+        content: String::new(),
+        tool_calls: vec![ToolCall { id: Some("call_7".into()), name: "read_file".into(), arguments: "{}".into() }],
+        tool_call_id: None,
+      },
+      ChatMessage::tool("call_7", "file contents"),
+    ];
+    let core = chat_history_to_core(&history).expect("translate");
+    match &core[0] {
+      core::Message::Assistant { content, .. } => match content.first_ref() {
+        core::AssistantContent::ToolCall(tc) => {
+          assert_eq!(tc.call_id.as_deref(), Some("call_7"));
+        }
+        other => panic!("expected tool call, got {other:?}"),
+      },
+      other => panic!("expected assistant, got {other:?}"),
+    }
+    match &core[1] {
+      core::Message::User { content } => match content.first_ref() {
+        core::UserContent::ToolResult(tr) => {
+          assert_eq!(tr.call_id.as_deref(), Some("call_7"));
+        }
+        other => panic!("expected tool result, got {other:?}"),
+      },
+      other => panic!("expected user, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn chat_history_to_core_rejects_tool_receipt_without_call_id() {
+    let history = vec![ChatMessage { role: ChatRole::Tool, content: "orphan".into(), tool_calls: Vec::new(), tool_call_id: None }];
+    assert!(chat_history_to_core(&history).is_err());
+  }
+
+  /// 思考模式关闭参数：DeepSeek 无 none 档取 minimal；DashScope 官方口径 none；
+  /// 其余 provider 不注入（空对象）。
+  #[test]
+  fn reasoning_param_follows_vendor_dialect() {
+    assert_eq!(reasoning_param(LlmProviderId::DeepSeek)["reasoning"]["effort"], "minimal");
+    assert_eq!(reasoning_param(LlmProviderId::Qwen)["reasoning"]["effort"], "none");
+    assert!(reasoning_param(LlmProviderId::OpenAi).get("reasoning").is_none());
   }
 
   #[test]
