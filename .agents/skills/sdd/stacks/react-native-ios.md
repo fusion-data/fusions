@@ -72,6 +72,14 @@ version: v4  # 2026-09-01 增 §4 桥 promise 落定与原生资源生命周期 
 - **桥 promise MUST 兜底落定**（对应 [frontend-conventions §9.3](../references/frontend-conventions.md#93-异步落定与定时器生命周期)）：iOS 系统回调存在机型性不达（实证形态：语音识别 `finish` 后 final callback 不达——partial 正常回流但终态缺失）——收尾方 MUST 提供超时兜底出口，以已回流的部分结果落定。
 - **长驻原生资源单例复用 + 会话代次守卫**：引擎级资源（audio engine / 识别器类）每次新建 = 旧实例僵尸化，新会话输入通道拿不到数据（实证形态：第二次会话起恒报「无语音」类系统错误）——MUST 模块级单例复用 + 会话级重入防御（新会话前 cancel 旧任务、重装输入 tap、状态读写收敛主队列）；异步回调 MUST 携带会话代次（epoch），stale 回调全静默——旧会话的取消回调 MUST NOT 拆掉新会话资源或污染新会话状态。
 
+### 4.1 JSI 直绑通道工程形态（hetu-chiji r422 回流，2026-09-09）
+
+- **装载时序**（react-native-quick-crypto `install()` 先例同款）：JS 侧入口（Metro 首行 polyfill 后）调 `RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(installXxx)` → `(RCTCxxBridge *)bridge` runtime cast → `HostObject` 挂 global 属性（幂等：已在则 true）；bridgeless / 模块缺失 no-op 回 false，通道选择层据此回退（fail-closed 语义归通道单源函数）。
+- **零拷贝类型边界**：出参 = `Runtime::createArrayBuffer(std::make_shared<MutableBuffer>)`（自定义 MutableBuffer 包 native 堆缓冲，析构回 C ABI `free_buffer`——**真零拷贝**，无拷贝构造）；入参 ArrayBuffer 直取 data()，TypedArray MUST 经 buffer+byteOffset+length 视图（bare `asUint8Array` 陷阱）；字符串出参 `String::createFromUtf8` 后即释放源缓冲。
+- **C++ 编译坑位（Xcode 26 / RN 新架构头）**：头文件裸 `jsi::` MUST 全限定 `facebook::jsi::`（不同传递包含层级下命名空间查找不稳）；`std::vector<jsi::PropNameID>` braced-init 拷贝构造已删（Pointer 移动独占）——用 `push_back`；podspec 现代分支需 `s.dependency 'React'`（jsi / RCTBridge+Private 头）。
+- **失败形态登记**：JSI 安装失败无异常抛出（silent false）——消费面 MUST 经通道单源函数 fail-closed（throw 中文引导重装文案），MUST NOT 散落 `globalThis.Xxx` 直取；错误串经 C ABI `take_last_error` → `JSError`（串释放勿漏）。
+- 受阻经验：无（本批一次落地）；参照实现 = hetu-chiji `apps/chiji-rn/ios/ChijiBridgeModule/ChijiJSIHostObject.mm`。
+
 ---
 
 ## 5. 测试通道形态（对应 [SPECIFICATION §13.1](../references/SPECIFICATION.md#131-测试分层)）
