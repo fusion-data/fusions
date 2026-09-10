@@ -680,7 +680,8 @@ mod tests {
 
   #[test]
   fn chat_history_to_core_rejects_tool_receipt_without_call_id() {
-    let history = vec![ChatMessage { role: ChatRole::Tool, content: "orphan".into(), tool_calls: Vec::new(), tool_call_id: None }];
+    let history =
+      vec![ChatMessage { role: ChatRole::Tool, content: "orphan".into(), tool_calls: Vec::new(), tool_call_id: None }];
     assert!(chat_history_to_core(&history).is_err());
   }
 
