@@ -6,7 +6,7 @@ use log::{debug, info, warn};
 use sqlx::Executor;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, Postgres};
 use sqlx::query::{Query, QueryAs, QueryScalar};
-use sqlx::{ConnectOptions, FromRow, IntoArguments, Pool, Transaction};
+use sqlx::{AssertSqlSafe, ConnectOptions, FromRow, IntoArguments, Pool, Transaction};
 use tokio::sync::Mutex;
 
 use crate::DbConfig;
@@ -42,7 +42,7 @@ pub async fn new_pg_pool_from_config(c: &DbConfig, application_name: Option<&str
     pool = pool.after_connect(move |conn, _| {
       let query = query.clone();
       Box::pin(async move {
-        conn.execute(query.as_str()).await?;
+        conn.execute(AssertSqlSafe(query.as_str())).await?;
         Ok(())
       })
     });
@@ -192,7 +192,7 @@ impl DbxPostgres {
     if let Some(txh) = txh_g.as_mut() {
       let savepoint_name = txh.inc();
       let sql = format!("SAVEPOINT {}", savepoint_name);
-      sqlx::query(&sql)
+      sqlx::query(AssertSqlSafe(sql.as_str()))
         .execute(txh.txn.as_mut())
         .await
         .map_err(|e| DbxError::SavePointError(format!("Failed to create savepoint '{}': {}", savepoint_name, e)))?;
@@ -209,7 +209,7 @@ impl DbxPostgres {
           .collect::<Vec<_>>()
           .join(", ");
         let sql = format!("SELECT {expressions}");
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
         for (key, value) in self.session_vars.iter() {
           query = query.bind(key).bind(value);
         }
@@ -240,7 +240,7 @@ impl DbxPostgres {
       } else if let Some(sp) = savepoint {
         // 回滚到 SAVEPOINT
         let sql = format!("ROLLBACK TO SAVEPOINT {}", sp);
-        sqlx::query(&sql)
+        sqlx::query(AssertSqlSafe(sql.as_str()))
           .execute(txh.txn.as_mut())
           .await
           .map_err(|e| DbxError::SavePointError(format!("Failed to rollback to savepoint '{}': {}", sp, e)))?;
@@ -279,7 +279,7 @@ impl DbxPostgres {
       } else if let Some(sp) = savepoint {
         // 嵌套事务场景，释放 SAVEPOINT
         let sql = format!("RELEASE SAVEPOINT {}", sp);
-        sqlx::query(&sql)
+        sqlx::query(AssertSqlSafe(sql.as_str()))
           .execute(txh.txn.as_mut())
           .await
           .map_err(|e| DbxError::SavePointError(format!("Failed to release savepoint '{}': {}", sp, e)))?;
@@ -303,7 +303,7 @@ impl DbxPostgres {
   pub async fn fetch_one<'q, O, A>(&self, query: QueryAs<'q, Postgres, O, A>) -> Result<O>
   where
     O: for<'r> FromRow<'r, <Postgres as sqlx::Database>::Row> + Send + Unpin,
-    A: IntoArguments<'q, Postgres> + 'q,
+    A: IntoArguments<Postgres> + 'q,
   {
     if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -321,7 +321,7 @@ impl DbxPostgres {
   pub async fn fetch_optional<'q, O, A>(&self, query: QueryAs<'q, Postgres, O, A>) -> Result<Option<O>>
   where
     O: for<'r> FromRow<'r, <Postgres as sqlx::Database>::Row> + Send + Unpin,
-    A: IntoArguments<'q, Postgres> + 'q,
+    A: IntoArguments<Postgres> + 'q,
   {
     let data = if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -342,7 +342,7 @@ impl DbxPostgres {
   pub async fn fetch_all<'q, O, A>(&self, query: QueryAs<'q, Postgres, O, A>) -> Result<Vec<O>>
   where
     O: for<'r> FromRow<'r, <Postgres as sqlx::Database>::Row> + Send + Unpin,
-    A: IntoArguments<'q, Postgres> + 'q,
+    A: IntoArguments<Postgres> + 'q,
   {
     let data = if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -362,7 +362,7 @@ impl DbxPostgres {
 
   pub async fn execute<'q, A>(&self, query: Query<'q, Postgres, A>) -> Result<u64>
   where
-    A: IntoArguments<'q, Postgres> + 'q,
+    A: IntoArguments<Postgres> + 'q,
   {
     let row_affected = if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -383,7 +383,7 @@ impl DbxPostgres {
   pub async fn fetch_one_scalar<'q, O, A>(&self, query: QueryScalar<'q, Postgres, O, A>) -> Result<O>
   where
     O: sqlx::Decode<'q, Postgres> + sqlx::Type<Postgres> + Send + Unpin,
-    A: 'q + IntoArguments<'q, Postgres> + Send,
+    A: 'q + IntoArguments<Postgres> + Send,
     (O,): for<'r> FromRow<'r, <Postgres as sqlx::Database>::Row>,
   {
     let data = if self.txn {
@@ -404,7 +404,7 @@ impl DbxPostgres {
   pub async fn fetch_optional_scalar<'q, O, A>(&self, query: QueryScalar<'q, Postgres, O, A>) -> Result<Option<O>>
   where
     O: sqlx::Decode<'q, Postgres> + sqlx::Type<Postgres> + Send + Unpin,
-    A: 'q + IntoArguments<'q, Postgres> + Send,
+    A: 'q + IntoArguments<Postgres> + Send,
     (O,): for<'r> FromRow<'r, <Postgres as sqlx::Database>::Row>,
   {
     let data = if self.txn {
@@ -425,7 +425,7 @@ impl DbxPostgres {
   pub async fn fetch_all_scalar<'q, O, A>(&self, query: QueryScalar<'q, Postgres, O, A>) -> Result<Vec<O>>
   where
     O: sqlx::Decode<'q, Postgres> + sqlx::Type<Postgres> + Send + Unpin,
-    A: 'q + IntoArguments<'q, Postgres> + Send,
+    A: 'q + IntoArguments<Postgres> + Send,
     (O,): for<'r> FromRow<'r, <Postgres as sqlx::Database>::Row>,
   {
     let data = if self.txn {

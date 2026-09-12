@@ -13,6 +13,7 @@
 use fusion_mq::postgres::PostgresEventQueueProvider;
 use fusion_mq::{EventConsumer, EventProducer, PublishEvent, RetryDecision};
 use serde_json::json;
+use sqlx::AssertSqlSafe;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
@@ -51,12 +52,12 @@ async fn setup_table(pool: &PgPool) -> String {
        processed_at    TIMESTAMPTZ
      )"
   );
-  sqlx::query(&ddl).execute(pool).await.expect("create test table");
+  sqlx::query(AssertSqlSafe(ddl.as_str())).execute(pool).await.expect("create test table");
   table
 }
 
 async fn drop_table(pool: &PgPool, table: &str) {
-  let _ = sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(pool).await;
+  let _ = sqlx::query(AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}").as_str())).execute(pool).await;
 }
 
 #[tokio::test]
@@ -94,7 +95,7 @@ async fn publish_then_claim_then_complete() {
   provider.mark_processed(claimed[0].id).await.expect("mark processed");
 
   // 验证 DB 状态
-  let row: (String,) = sqlx::query_as(&format!("SELECT status FROM {table} WHERE id = $1"))
+  let row: (String,) = sqlx::query_as(AssertSqlSafe(format!("SELECT status FROM {table} WHERE id = $1").as_str()))
     .bind(claimed[0].id.0)
     .fetch_one(&pool)
     .await
@@ -120,11 +121,12 @@ async fn mark_failed_retry_vs_dead() {
 
   // RetryDecision::Retry → 回 pending + retry_count +1
   provider.mark_failed(id, "boom", RetryDecision::Retry).await.unwrap();
-  let row: (String, i32) = sqlx::query_as(&format!("SELECT status, retry_count FROM {table} WHERE id = $1"))
-    .bind(id.0)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+  let row: (String, i32) =
+    sqlx::query_as(AssertSqlSafe(format!("SELECT status, retry_count FROM {table} WHERE id = $1").as_str()))
+      .bind(id.0)
+      .fetch_one(&pool)
+      .await
+      .unwrap();
   assert_eq!(row.0, "pending");
   assert_eq!(row.1, 1);
 
@@ -132,11 +134,12 @@ async fn mark_failed_retry_vs_dead() {
   let claimed = provider.claim_pending("dst", 1).await.unwrap();
   assert_eq!(claimed.len(), 1);
   provider.mark_failed(id, "fatal", RetryDecision::Dead).await.unwrap();
-  let row: (String, i32) = sqlx::query_as(&format!("SELECT status, retry_count FROM {table} WHERE id = $1"))
-    .bind(id.0)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+  let row: (String, i32) =
+    sqlx::query_as(AssertSqlSafe(format!("SELECT status, retry_count FROM {table} WHERE id = $1").as_str()))
+      .bind(id.0)
+      .fetch_one(&pool)
+      .await
+      .unwrap();
   assert_eq!(row.0, "failed");
   assert_eq!(row.1, 2);
 
@@ -189,16 +192,18 @@ async fn reap_zombie_resets_stuck_processing() {
   provider.claim_pending("dst", 1).await.unwrap();
 
   // 手动把 updated_at 拉回 10 分钟前模拟卡死
-  sqlx::query(&format!("UPDATE {table} SET updated_at = now() - INTERVAL '10 minutes' WHERE id = $1"))
-    .bind(id.0)
-    .execute(&pool)
-    .await
-    .unwrap();
+  sqlx::query(AssertSqlSafe(
+    format!("UPDATE {table} SET updated_at = now() - INTERVAL '10 minutes' WHERE id = $1").as_str(),
+  ))
+  .bind(id.0)
+  .execute(&pool)
+  .await
+  .unwrap();
 
   let reaped = provider.reap_zombie("dst", Duration::from_secs(300)).await.unwrap();
   assert_eq!(reaped, 1);
 
-  let row: (String,) = sqlx::query_as(&format!("SELECT status FROM {table} WHERE id = $1"))
+  let row: (String,) = sqlx::query_as(AssertSqlSafe(format!("SELECT status FROM {table} WHERE id = $1").as_str()))
     .bind(id.0)
     .fetch_one(&pool)
     .await

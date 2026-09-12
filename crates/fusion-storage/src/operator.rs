@@ -44,7 +44,7 @@ fn build_fs(config: &StorageConfig) -> Result<Operator, String> {
   })?;
   std::fs::create_dir_all(root).map_err(|e| format!("Failed to create fs storage root {root}: {e}"))?;
   let builder = opendal::services::Fs::default().root(root);
-  Ok(Operator::new(builder).map_err(|e| format!("Failed to create fs operator: {e}"))?.finish())
+  Operator::new(builder).map_err(|e| format!("Failed to create fs operator: {e}"))
 }
 
 #[cfg(not(feature = "fs"))]
@@ -63,7 +63,7 @@ fn build_oss(config: &StorageConfig) -> Result<Operator, String> {
   if let Some(pe) = config.presign_endpoint.as_deref() {
     builder = builder.presign_endpoint(pe);
   }
-  Ok(Operator::new(builder).map_err(|e| format!("Failed to create OSS operator: {e}"))?.finish())
+  Operator::new(builder).map_err(|e| format!("Failed to create OSS operator: {e}"))
 }
 
 #[cfg(not(feature = "oss"))]
@@ -82,7 +82,7 @@ fn build_s3(config: &StorageConfig) -> Result<Operator, String> {
   if let Some(ep) = config.endpoint.as_deref() {
     builder = builder.endpoint(ep);
   }
-  Ok(Operator::new(builder).map_err(|e| format!("Failed to create S3 operator: {e}"))?.finish())
+  Operator::new(builder).map_err(|e| format!("Failed to create S3 operator: {e}"))
 }
 
 #[cfg(not(feature = "s3"))]
@@ -98,7 +98,7 @@ fn build_obs(config: &StorageConfig) -> Result<Operator, String> {
     .endpoint(config.endpoint.as_deref().unwrap_or(""))
     .access_key_id(config.access_key.as_deref().unwrap_or(""))
     .secret_access_key(config.secret_key.as_deref().unwrap_or(""));
-  Ok(Operator::new(builder).map_err(|e| format!("Failed to create OBS operator: {e}"))?.finish())
+  Operator::new(builder).map_err(|e| format!("Failed to create OBS operator: {e}"))
 }
 
 #[cfg(not(feature = "obs"))]
@@ -133,7 +133,7 @@ mod tests {
     let mut c = StorageConfig::new("fs");
     c.root = Some(root.clone());
     let op = build_operator(&c).expect("fs operator");
-    assert!(!op.info().full_capability().presign, "fs must not report native presign");
+    assert!(!op.info().capability().presign, "fs must not report native presign");
     assert!(std::path::Path::new(&root).is_dir(), "root directory is created");
     let _ = std::fs::remove_dir_all(&root);
   }
@@ -176,7 +176,7 @@ mod tests {
     c.access_key = Some("ak".to_owned());
     c.secret_key = Some("sk".to_owned());
     let op = build_operator(&c).expect("oss operator with static credentials builds without network");
-    let cap = op.info().full_capability();
+    let cap = op.info().capability();
     assert!(
       cap.presign || cap.presign_read,
       "oss must report native presign capability (capability gate routing anchor)"
@@ -205,7 +205,7 @@ mod tests {
     c.access_key = Some("ak".to_owned());
     c.secret_key = Some("sk".to_owned());
     let op = build_operator(&c).expect("s3 operator with endpoint + region + static credentials");
-    assert!(op.info().full_capability().presign_write, "s3 must report native presign_write capability");
+    assert!(op.info().capability().presign_write, "s3 must report native presign_write capability");
   }
 
   #[cfg(feature = "obs")]
@@ -217,6 +217,6 @@ mod tests {
     c.access_key = Some("ak".to_owned());
     c.secret_key = Some("sk".to_owned());
     let op = build_operator(&c).expect("obs operator with static credentials");
-    assert!(op.info().full_capability().presign, "obs must report native presign capability");
+    assert!(op.info().capability().presign, "obs must report native presign capability");
   }
 }

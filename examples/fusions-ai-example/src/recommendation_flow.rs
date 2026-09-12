@@ -7,6 +7,7 @@ use fusions::ai::graph_flow::{
 use fusions::ai::providers::openai_compatible::completion::{CompletionModel, CompletionRequest};
 use fusions::ai::providers::openai_compatible::types as core_types;
 use serde::Deserialize;
+use sqlx::AssertSqlSafe;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tracing::{Level, error, info};
@@ -146,7 +147,7 @@ impl Task for VectorSearchTask {
       vector_literal
     );
 
-    let rows = sqlx::query_as::<_, (i32, String, String)>(&sql)
+    let rows = sqlx::query_as::<_, (i32, String, String)>(AssertSqlSafe(sql.as_str()))
       .fetch_all(&self.pool)
       .await
       .map_err(|e| TaskExecutionFailed(format!("Database query failed: {}", e)))?;

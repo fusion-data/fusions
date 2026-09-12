@@ -26,7 +26,7 @@ obs = ["opendal/services-obs"]
 # workspace 模板会把固定 feature 集带进所有消费闭包。版本与消费仓同锁 0.57
 # （0.58.0 已 yank、0.58.1 未发布；quick-xml 相关 RUSTSEC 暂忍口径由消费仓各自的
 # deny.toml / pin 注释记录）。升级前 MUST 读消费仓 pin 注释，MUST NOT 在本 crate 单独 bump。
-opendal = { version = "0.57" }
+opendal = { version = "0.59" }
 chrono = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }

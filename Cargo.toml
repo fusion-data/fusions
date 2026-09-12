@@ -214,9 +214,8 @@ duration-str = "0.21"
 croner = "3.0"
 hierarchical_hash_wheel_timer = { version = "1.4", features = ["uuid"] }
 # -- Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "chrono", "json", "rust_decimal"] }
-# sqlx 0.9 已随 rig 移除而解锁（rig-postgres 0.40 要求 sqlx ^0.9 的版本锁已消失）；
-# 升级本身独立立项，仍维持 0.8。
+# 0.9 起 Query 为 'static：动态拼接 SQL MUST 经 `AssertSqlSafe` 显式放行（SqlSafeStr 契约）。
+sqlx = { version = "0.9", features = ["runtime-tokio", "chrono", "json", "rust_decimal"] }
 # -- Serde
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_path_to_error = "0.1"
@@ -316,13 +315,12 @@ once_cell = { version = "1" }
 
 # -- ConnectRPC
 #
-# buffa 保持 0.8（尽管 0.9 已发布）：connectrpc 0.8.1（最新版）依赖 `buffa ^0.8.1`，且生成代码
-# 混用两个 crate 的类型，必须同步升级。待某个 connectrpc 版本接受 buffa 0.9 后再一起升。
-connectrpc = { version = "0.8", features = ["axum"] }
-connectrpc-build = "0.8"
-buffa = { version = "0.8", features = ["json"] }
-buffa-build = "0.8"
-buffa-types = { version = "0.8", features = ["json"] }
+# connectrpc 与 buffa 同版本线耦合（生成代码混用两 crate 类型，升级 MUST 全家同批）。
+connectrpc = { version = "0.9", features = ["axum"] }
+connectrpc-build = "0.9"
+buffa = { version = "0.9", features = ["json"] }
+buffa-build = "0.9"
+buffa-types = { version = "0.9", features = ["json"] }
 # protoc-bin-vendored = "3"
 # -- cloud storage access
 # opendal 刻意不在 workspace 模板声明：fusion-storage 以直声明做 feature 透传

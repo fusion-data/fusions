@@ -28,7 +28,7 @@ use hetuflow_core::{
   ActivityInstance, ActivityType, DefinitionSnapshot, EventRecord, FacilityVisibility, FlowError, OutboxRecord, Result,
   ScopeFilter, TimerRecord, WorkflowInstance, WorkflowResult, WorkflowStatus,
 };
-use sqlx::{Postgres, QueryBuilder};
+use sqlx::{AssertSqlSafe, Postgres, QueryBuilder};
 
 const INSTANCE_COLS: &str = "id, tenant_id, facility_id, reference_no, workflow_definition_id, business_key, business_type, status, current_activity_id, result, side_effects_executed, context, started_at, completed_at, created_at, updated_at";
 const ACTIVITY_COLS: &str = "id, tenant_id, workflow_instance_id, activity_definition_id, activity_type, status, assignee_role, assignee_id, result, review_notes, reviewed_by, reviewed_at, round";
@@ -602,12 +602,12 @@ impl WorkflowStore for PgWorkflowStore {
   ) -> Result<Option<WorkflowInstance>> {
     let row = dbx
       .fetch_optional(
-        sqlx::query_as::<_, InstanceRow>(&format!(
+        sqlx::query_as::<_, InstanceRow>(AssertSqlSafe(format!(
           "INSERT INTO workflow_instances (tenant_id, facility_id, reference_no, workflow_definition_id, business_key, business_type, status, side_effects_executed, context, definition_snapshot, definition_hash, started_at)
            VALUES ($1, $2, $3, $4, $5, $6, 2, false, $7, $8, $9, now())
            ON CONFLICT (business_key, business_type) WHERE status IN (1, 2) DO NOTHING
            RETURNING {INSTANCE_COLS}"
-        ))
+        ).as_str()))
         .bind(tenant_id)
         .bind(facility_id)
         .bind(reference_no)
@@ -631,9 +631,9 @@ impl WorkflowStore for PgWorkflowStore {
   ) -> Result<Option<WorkflowInstance>> {
     let row = dbx
       .fetch_optional(
-        sqlx::query_as::<_, InstanceRow>(&format!(
+        sqlx::query_as::<_, InstanceRow>(AssertSqlSafe(format!(
           "SELECT {INSTANCE_COLS} FROM workflow_instances WHERE business_key = $1 AND business_type = $2 AND status IN (1, 2) LIMIT 1"
-        ))
+        ).as_str()))
         .bind(business_key)
         .bind(business_type),
       )
@@ -674,8 +674,10 @@ impl WorkflowStore for PgWorkflowStore {
   async fn load_instance(&self, dbx: &DbxPostgres, id: uuid::Uuid) -> Result<Option<WorkflowInstance>> {
     let row = dbx
       .fetch_optional(
-        sqlx::query_as::<_, InstanceRow>(&format!("SELECT {INSTANCE_COLS} FROM workflow_instances WHERE id = $1"))
-          .bind(id),
+        sqlx::query_as::<_, InstanceRow>(AssertSqlSafe(
+          format!("SELECT {INSTANCE_COLS} FROM workflow_instances WHERE id = $1").as_str(),
+        ))
+        .bind(id),
       )
       .await
       .map_err(map_db)?;
@@ -835,11 +837,11 @@ impl WorkflowStore for PgWorkflowStore {
   ) -> Result<ActivityInstance> {
     let row = dbx
       .fetch_one(
-        sqlx::query_as::<_, ActivityRow>(&format!(
+        sqlx::query_as::<_, ActivityRow>(AssertSqlSafe(format!(
           "INSERT INTO activity_instances (tenant_id, workflow_instance_id, activity_definition_id, activity_type, status, assignee_role, assignee_id, result, round)
            VALUES ($1, $2, $3, $4, 2, $5, NULL, NULL, $6)
            RETURNING {ACTIVITY_COLS}"
-        ))
+        ).as_str()))
         .bind(tenant_id)
         .bind(instance_id)
         .bind(node_id)
@@ -855,9 +857,9 @@ impl WorkflowStore for PgWorkflowStore {
   async fn active_activity(&self, dbx: &DbxPostgres, instance_id: uuid::Uuid) -> Result<Option<ActivityInstance>> {
     let row = dbx
       .fetch_optional(
-        sqlx::query_as::<_, ActivityRow>(&format!(
+        sqlx::query_as::<_, ActivityRow>(AssertSqlSafe(format!(
           "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 AND status = 2 ORDER BY created_at DESC LIMIT 1"
-        ))
+        ).as_str()))
         .bind(instance_id),
       )
       .await
@@ -868,9 +870,9 @@ impl WorkflowStore for PgWorkflowStore {
   async fn active_activities(&self, dbx: &DbxPostgres, instance_id: uuid::Uuid) -> Result<Vec<ActivityInstance>> {
     let rows = dbx
       .fetch_all(
-        sqlx::query_as::<_, ActivityRow>(&format!(
+        sqlx::query_as::<_, ActivityRow>(AssertSqlSafe(format!(
           "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 AND status = 2 ORDER BY created_at ASC"
-        ))
+        ).as_str()))
         .bind(instance_id),
       )
       .await
@@ -938,8 +940,10 @@ impl WorkflowStore for PgWorkflowStore {
   async fn load_activity(&self, dbx: &DbxPostgres, activity_id: uuid::Uuid) -> Result<Option<ActivityInstance>> {
     let row = dbx
       .fetch_optional(
-        sqlx::query_as::<_, ActivityRow>(&format!("SELECT {ACTIVITY_COLS} FROM activity_instances WHERE id = $1"))
-          .bind(activity_id),
+        sqlx::query_as::<_, ActivityRow>(AssertSqlSafe(
+          format!("SELECT {ACTIVITY_COLS} FROM activity_instances WHERE id = $1").as_str(),
+        ))
+        .bind(activity_id),
       )
       .await
       .map_err(map_db)?;
@@ -949,8 +953,9 @@ impl WorkflowStore for PgWorkflowStore {
   async fn list_activities(&self, dbx: &DbxPostgres, instance_id: uuid::Uuid) -> Result<Vec<ActivityInstance>> {
     let rows = dbx
       .fetch_all(
-        sqlx::query_as::<_, ActivityRow>(&format!(
-          "SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 ORDER BY created_at"
+        sqlx::query_as::<_, ActivityRow>(AssertSqlSafe(
+          format!("SELECT {ACTIVITY_COLS} FROM activity_instances WHERE workflow_instance_id = $1 ORDER BY created_at")
+            .as_str(),
         ))
         .bind(instance_id),
       )
@@ -1179,8 +1184,9 @@ impl WorkflowStore for PgWorkflowStore {
   ) -> Result<Vec<OutboxRecord>> {
     let rows = dbx
       .fetch_all(
-        sqlx::query_as::<_, OutboxRow>(&format!(
-          "UPDATE workflow_activity_outbox
+        sqlx::query_as::<_, OutboxRow>(AssertSqlSafe(
+          format!(
+            "UPDATE workflow_activity_outbox
            SET status = 2, lease_owner = $1, lease_expires_at = now() + $2 * interval '1 second', updated_at = now()
            WHERE id IN (
              SELECT id FROM workflow_activity_outbox
@@ -1191,6 +1197,8 @@ impl WorkflowStore for PgWorkflowStore {
              LIMIT $3
            )
            RETURNING {OUTBOX_COLS}"
+          )
+          .as_str(),
         ))
         .bind(worker_id)
         .bind(lease_ttl_secs)

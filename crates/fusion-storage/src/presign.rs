@@ -151,7 +151,7 @@ async fn presign_download_uncached(
   routes: &FsPresignRoutes<'_>,
   hmac_secret: &[u8],
 ) -> Result<String, String> {
-  let cap = op.info().full_capability();
+  let cap = op.info().capability();
   if cap.presign || cap.presign_read {
     // 云后端：native presign_read
     let mut fut = op.presign_read_with(key, Duration::from_secs(ttl_secs));
@@ -213,7 +213,7 @@ async fn presign_upload_uncached(
   routes: &FsPresignRoutes<'_>,
   hmac_secret: &[u8],
 ) -> Result<String, String> {
-  let cap = op.info().full_capability();
+  let cap = op.info().capability();
   if cap.presign_write {
     let req = op
       .presign_write_with(key, Duration::from_secs(ttl_secs))
@@ -292,9 +292,7 @@ mod tests {
   fn fs_operator() -> Operator {
     let dir = std::env::temp_dir().join(format!("fusion-storage-presign-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp root");
-    Operator::new(opendal::services::Fs::default().root(dir.to_str().expect("utf-8 path")))
-      .expect("wrap fs access")
-      .finish()
+    Operator::new(opendal::services::Fs::default().root(dir.to_str().expect("utf-8 path"))).expect("wrap fs access")
   }
 
   fn block_on<F: std::future::Future>(fut: F) -> F::Output {

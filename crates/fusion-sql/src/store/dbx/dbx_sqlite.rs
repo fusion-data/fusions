@@ -5,7 +5,7 @@ use std::{
 
 use log::LevelFilter;
 use sqlx::{
-  ConnectOptions, FromRow, IntoArguments, Pool, Transaction,
+  AssertSqlSafe, ConnectOptions, FromRow, IntoArguments, Pool, Transaction,
   query::{Query, QueryAs},
   sqlite::{Sqlite, SqliteConnectOptions, SqlitePoolOptions},
 };
@@ -83,7 +83,7 @@ impl DbxSqlite {
     if let Some(txh) = txh_g.as_mut() {
       let savepoint_name = txh.inc();
       let sql = format!("SAVEPOINT {}", savepoint_name);
-      sqlx::query(&sql)
+      sqlx::query(AssertSqlSafe(sql.as_str()))
         .execute(txh.txn.as_mut())
         .await
         .map_err(|e| DbxError::SavePointError(format!("Failed to create savepoint '{}': {}", savepoint_name, e)))?;
@@ -110,7 +110,7 @@ impl DbxSqlite {
       } else if let Some(sp) = savepoint {
         // 回滚到 SAVEPOINT
         let sql = format!("ROLLBACK TO SAVEPOINT {}", sp);
-        sqlx::query(&sql)
+        sqlx::query(AssertSqlSafe(sql.as_str()))
           .execute(txh.txn.as_mut())
           .await
           .map_err(|e| DbxError::SavePointError(format!("Failed to rollback to savepoint '{}': {}", sp, e)))?;
@@ -145,7 +145,7 @@ impl DbxSqlite {
       } else if let Some(sp) = savepoint {
         // 嵌套事务场景，释放 SAVEPOINT
         let sql = format!("RELEASE SAVEPOINT {}", sp);
-        sqlx::query(&sql)
+        sqlx::query(AssertSqlSafe(sql.as_str()))
           .execute(txh.txn.as_mut())
           .await
           .map_err(|e| DbxError::SavePointError(format!("Failed to release savepoint '{}': {}", sp, e)))?;
@@ -170,7 +170,7 @@ impl DbxSqlite {
   pub async fn fetch_one<'q, O, A>(&self, query: QueryAs<'q, Sqlite, O, A>) -> Result<O>
   where
     O: for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + Send + Unpin,
-    A: IntoArguments<'q, Sqlite> + 'q,
+    A: IntoArguments<Sqlite> + 'q,
   {
     if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -187,7 +187,7 @@ impl DbxSqlite {
   pub async fn fetch_optional<'q, O, A>(&self, query: QueryAs<'q, Sqlite, O, A>) -> Result<Option<O>>
   where
     O: for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + Send + Unpin,
-    A: IntoArguments<'q, Sqlite> + 'q,
+    A: IntoArguments<Sqlite> + 'q,
   {
     let data = if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -206,7 +206,7 @@ impl DbxSqlite {
   pub async fn fetch_all<'q, O, A>(&self, query: QueryAs<'q, Sqlite, O, A>) -> Result<Vec<O>>
   where
     O: for<'r> FromRow<'r, <Sqlite as sqlx::Database>::Row> + Send + Unpin,
-    A: IntoArguments<'q, Sqlite> + 'q,
+    A: IntoArguments<Sqlite> + 'q,
   {
     let data = if self.txn {
       let mut txh_g = self.txn_holder.lock().await;
@@ -224,7 +224,7 @@ impl DbxSqlite {
 
   pub async fn execute<'q, A>(&self, query: Query<'q, Sqlite, A>) -> Result<u64>
   where
-    A: IntoArguments<'q, Sqlite> + 'q,
+    A: IntoArguments<Sqlite> + 'q,
   {
     let row_affected = if self.txn {
       let mut txh_g = self.txn_holder.lock().await;

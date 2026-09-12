@@ -10,6 +10,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use sqlx::AssertSqlSafe;
 use sqlx::PgPool;
 use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
@@ -79,7 +80,7 @@ impl EventProducer for PostgresEventQueueProvider {
        VALUES ($1, $2, $3, $4, $5) RETURNING id",
       self.table_name
     );
-    let id: Uuid = sqlx::query_scalar(&sql)
+    let id: Uuid = sqlx::query_scalar(AssertSqlSafe(sql.as_str()))
       .bind(&event.event_type)
       .bind(&event.source_service)
       .bind(&event.target_service)
@@ -107,7 +108,7 @@ impl EventConsumer for PostgresEventQueueProvider {
        FOR UPDATE SKIP LOCKED LIMIT $2",
       self.table_name
     );
-    let rows = sqlx::query(&select_sql)
+    let rows = sqlx::query(AssertSqlSafe(select_sql.as_str()))
       .bind(target_service)
       .bind(batch_size as i64)
       .fetch_all(&mut *tx)
@@ -122,7 +123,7 @@ impl EventConsumer for PostgresEventQueueProvider {
     // 2. UPDATE 同一事务内置 processing=2
     let ids: Vec<Uuid> = rows.iter().map(|r| r.get::<Uuid, _>("id")).collect();
     let update_sql = format!("UPDATE {} SET status = 2, updated_at = now() WHERE id = ANY($1)", self.table_name);
-    sqlx::query(&update_sql)
+    sqlx::query(AssertSqlSafe(update_sql.as_str()))
       .bind(&ids)
       .execute(&mut *tx)
       .await
@@ -147,7 +148,7 @@ impl EventConsumer for PostgresEventQueueProvider {
   async fn mark_processed(&self, event_id: EventId) -> Result<(), MqError> {
     let sql =
       format!("UPDATE {} SET status = 3, processed_at = now(), updated_at = now() WHERE id = $1", self.table_name);
-    let res = sqlx::query(&sql)
+    let res = sqlx::query(AssertSqlSafe(sql.as_str()))
       .bind(event_id.0)
       .execute(&self.pool)
       .await
@@ -173,7 +174,7 @@ impl EventConsumer for PostgresEventQueueProvider {
        WHERE id = $1",
       self.table_name
     );
-    let res = sqlx::query(&sql)
+    let res = sqlx::query(AssertSqlSafe(sql.as_str()))
       .bind(event_id.0)
       .bind(next_status)
       .bind(error)
@@ -199,7 +200,7 @@ impl EventConsumer for PostgresEventQueueProvider {
          AND updated_at < now() - make_interval(secs => $2)",
       self.table_name
     );
-    let res = sqlx::query(&sql)
+    let res = sqlx::query(AssertSqlSafe(sql.as_str()))
       .bind(target_service)
       .bind(interval_secs)
       .execute(&self.pool)
