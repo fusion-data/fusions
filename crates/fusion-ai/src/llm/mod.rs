@@ -182,6 +182,10 @@ pub struct ChatCompletionRequest {
   /// None = 用 transport 默认 timeout；Some = 单请求覆盖（wire 层经
   /// `RequestBuilder::timeout` 下发，覆盖 client 默认值）
   pub timeout: Option<Duration>,
+  /// Output token hard cap (r428): None = don't send the field (vendor default);
+  /// Some = passed through via the OpenAI-compat wire layer's `max_tokens`.
+  /// OpenAI-compat endpoints (deepseek / qwen / openai) all support this as a standard field.
+  pub max_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

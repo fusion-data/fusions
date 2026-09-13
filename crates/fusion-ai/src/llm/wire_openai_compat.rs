@@ -354,6 +354,12 @@ pub fn build_request_body(default_model: &str, req: &ChatCompletionRequest) -> V
   {
     obj.insert("temperature".into(), json!(t));
   }
+  // r428: output token hard cap — standard OpenAI-compat field, absent when None.
+  if let Some(mt) = req.max_tokens
+    && let Some(obj) = body.as_object_mut()
+  {
+    obj.insert("max_tokens".into(), json!(mt));
+  }
   if !req.tools.is_empty() {
     let tools_json: Vec<Value> = req
       .tools
@@ -605,6 +611,7 @@ mod tests {
       tool_choice: Some(ToolChoice::Function("submit".into())),
       temperature: Some(0.0),
       timeout: None,
+      max_tokens: None,
     }
   }
 
