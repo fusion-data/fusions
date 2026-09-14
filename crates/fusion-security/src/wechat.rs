@@ -18,7 +18,9 @@
 //!
 //! 明文纪律：secret / code 只进 query 不落日志；错误日志仅打类别与 errcode；
 //! 小程序面 `session_key` 原语层解析即弃——不入任何返回值 / 日志 / 持久面
-//! （无微信加密数据消费诉求）。
+//! （无微信加密数据消费诉求）。透出属显式例外：[`MpSessionWithKey`] 为虚拟
+//! 支付签名等场景立的携 key 显式原语（业务无关、可复用；消费方须经隐私评审
+//! 后使用，MUST NOT 借道无 key 结构）。
 
 use std::time::Duration;
 
@@ -49,6 +51,17 @@ const WECHAT_ERR_SYSTEM_BUSY: i64 = -1;
 /// API 分钟配额 errcode（45011——服务侧限流，与系统忙同族按不可用降级；请求侧
 /// 无可修复性，MUST NOT 映射凭据错误）。
 const WECHAT_ERR_API_MINUTE_QUOTA: i64 = 45011;
+
+/// 小程序 code2Session 会话（**携 session_key 显式原语**——虚拟支付用户态签名
+/// 等场景的消费面；与 [`MpSession`]「解析即弃」纪律分立，透出须经隐私评审）。
+/// `session_key` 属敏感凭据：本结构仅内存态承载，MUST NOT 落库 / 落日志，
+/// 消费方用完即弃。
+#[derive(Debug, Clone)]
+pub struct MpSessionWithKey {
+  pub openid: String,
+  pub unionid: Option<String>,
+  pub session_key: String,
+}
 
 /// 换码成功会话（官方响应字段子集——只取有消费面的）。
 #[derive(Debug, Clone)]
@@ -218,6 +231,41 @@ impl WechatAuthClient {
     }
     // session_key 解析即弃——不进返回值（MpSession 纪律）
     Ok(MpSession { openid: body.openid, unionid: body.unionid })
+  }
+
+  /// 小程序 code 换会话（**携 session_key 显式原语**）——与
+  /// [`jscode_to_session`](Self::jscode_to_session) 同端点同错误口径，差异仅在
+  /// 透出 session_key（消费方 = 虚拟支付签名等显式场景，须过隐私评审）。
+  pub async fn jscode_to_session_with_key(
+    &self,
+    appid: &str,
+    secret: &str,
+    js_code: &str,
+  ) -> Result<MpSessionWithKey, WechatAuthError> {
+    let mut url = url::Url::parse(&format!("{}/sns/jscode2session", self.endpoint_base))
+      .map_err(|e| WechatAuthError::Unavailable { message: format!("invalid endpoint base: {e}") })?;
+    url.query_pairs_mut().extend_pairs([
+      ("appid", appid),
+      ("secret", secret),
+      ("js_code", js_code),
+      ("grant_type", "authorization_code"),
+    ]);
+    let resp = self.http.get(url).send().await?;
+    if !resp.status().is_success() {
+      tracing::warn!(status = %resp.status(), "wechat auth: jscode2session http error");
+      return Err(WechatAuthError::Unavailable { message: format!("http status {}", resp.status()) });
+    }
+    let body: JsCodeSessionResponse = resp
+      .json()
+      .await
+      .map_err(|e| WechatAuthError::Unavailable { message: format!("malformed response body: {e}") })?;
+    if body.errcode != 0 {
+      return Err(classify_errcode(body.errcode, &body.errmsg));
+    }
+    if body.openid.is_empty() || body.session_key.is_empty() {
+      return Err(WechatAuthError::Unavailable { message: "success response missing openid/session_key".to_string() });
+    }
+    Ok(MpSessionWithKey { openid: body.openid, unionid: body.unionid, session_key: body.session_key })
   }
 }
 
@@ -424,6 +472,23 @@ mod tests {
   async fn jscode_missing_openid_maps_unavailable() {
     let base = spawn_mock(vec![(200, r#"{"session_key":"sk"}"#.to_string())]).await;
     let e = client(&base).jscode_to_session("appid", "secret", "js-code").await.unwrap_err();
+    assert!(matches!(e, WechatAuthError::Unavailable { .. }));
+  }
+
+  #[tokio::test]
+  async fn jscode_with_key_reveals_session_key_explicitly() {
+    // 携 key 显式原语锚：session_key 只在 WithKey 结构面透出（MpSession 恒无）。
+    let base = spawn_mock(vec![(200, r#"{"openid":"oMP","session_key":"sk-1","unionid":"oU"}"#.to_string())]).await;
+    let s = client(&base).jscode_to_session_with_key("appid", "secret", "js-code").await.unwrap();
+    assert_eq!(s.openid, "oMP");
+    assert_eq!(s.session_key, "sk-1");
+    assert_eq!(s.unionid.as_deref(), Some("oU"));
+  }
+
+  #[tokio::test]
+  async fn jscode_with_key_missing_session_key_maps_unavailable() {
+    let base = spawn_mock(vec![(200, r#"{"openid":"oMP"}"#.to_string())]).await;
+    let e = client(&base).jscode_to_session_with_key("appid", "secret", "js-code").await.unwrap_err();
     assert!(matches!(e, WechatAuthError::Unavailable { .. }));
   }
 
