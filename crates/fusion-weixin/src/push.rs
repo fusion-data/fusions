@@ -240,6 +240,42 @@ fn xml_openid(body: &str) -> String {
     .to_string()
 }
 
+/// XML 顶层字段平铺（`Other` 事件留痕面）：扫全部 `<tag>文本</tag>` 对，
+/// CDATA 剥除、空文本跳过；二层结构（如 `WeChatPayInfo.MchOrderNo`）的内层
+/// 键会被独立采到（留痕容忍扁平化，与 JSON 面 `flatten_json` 同口径）。
+fn xml_top_level_fields(body: &str) -> Vec<(String, String)> {
+  let mut out = Vec::new();
+  let mut rest = body;
+  while let Some(open) = rest.find('<') {
+    let after = &rest[open + 1..];
+    let Some(tag_end) = after.find('>') else { break };
+    let tag = &after[..tag_end];
+    if tag.starts_with('/') || tag.starts_with('?') || tag.starts_with('!') {
+      rest = &after[tag_end + 1..];
+      continue;
+    }
+    let tail = &after[tag_end + 1..];
+    // CDATA 文本段 `<tag><![CDATA[value]]></tag>`：内容以 `<` 开头，纯文本段
+    // 逻辑会误判为空——须按 `]]>` 收口取值。
+    if let Some(content) = tail.strip_prefix("<![CDATA[") {
+      let end = content.find("]]>").unwrap_or(content.len());
+      let value = content[..end].trim();
+      if !value.is_empty() {
+        out.push((tag.to_string(), value.to_string()));
+      }
+      rest = &content[end..];
+      continue;
+    }
+    let text_end = tail.find('<').unwrap_or(tail.len());
+    let value = tail[..text_end].trim();
+    if !value.is_empty() {
+      out.push((tag.to_string(), value.to_string()));
+    }
+    rest = &tail[text_end..];
+  }
+  out
+}
+
 fn parse_event_xml(body: &str) -> Result<XpayEvent, PushError> {
   let event = xml_tag(body, &["Event"]).unwrap_or_default().to_string();
   match event.as_str() {
@@ -255,7 +291,7 @@ fn parse_event_xml(body: &str) -> Result<XpayEvent, PushError> {
       out_trade_no: xml_tag(body, &["OutTradeNo"]).unwrap_or_default().to_string(),
       wx_order_id: xml_tag(body, &["WeChatPayInfo", "MchOrderNo"]).unwrap_or_default().to_string(),
     }),
-    _ => Ok(XpayEvent::Other { event, fields: Vec::new() }),
+    _ => Ok(XpayEvent::Other { event, fields: xml_top_level_fields(body) }),
   }
 }
 
@@ -345,6 +381,22 @@ mod tests {
       XpayEvent::Other { event, fields } => {
         assert_eq!(event, "xpay_complaint_notify");
         assert!(fields.iter().any(|(k, v)| k == "ComplaintId" && v == "c-1"));
+      }
+      other => panic!("unexpected event: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn unknown_xml_event_keeps_fields_for_manual_processing() {
+    let body = "<xml><ToUserName><![CDATA[gh_x]]></ToUserName>\
+                <Event><![CDATA[xpay_complaint_notify]]></Event>\
+                <ComplaintId><![CDATA[c-9]]></ComplaintId><OrderStatus>3</OrderStatus></xml>";
+    match parse_event(PushFormat::Xml, body).expect("parse") {
+      XpayEvent::Other { event, fields } => {
+        assert_eq!(event, "xpay_complaint_notify");
+        assert!(fields.iter().any(|(k, v)| k == "ComplaintId" && v == "c-9"), "CDATA 剥除");
+        assert!(fields.iter().any(|(k, v)| k == "OrderStatus" && v == "3"), "纯文本字段");
+        assert!(fields.iter().all(|(k, _)| !k.is_empty()));
       }
       other => panic!("unexpected event: {other:?}"),
     }
