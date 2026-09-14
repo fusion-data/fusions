@@ -139,6 +139,10 @@ base64 = "0.22"
 aes-gcm = "0.11"
 hmac = "0.13"
 sha2 = "0.11"
+# -- 微信消息推送（WXBizMsgCrypt 口径）：Token 验签 sha1 + AES-256-CBC 密文解密
+sha1 = "0.11"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
 # hetuflow Phase E DAG guard：CEL (Common Expression Language) pure-Rust 解释器
 # json feature：G2 ForEach 用 cel::Value::json() 把 items_path 求值结果转回 serde_json 数组
 cel = { version = "0.14", features = ["json"] }

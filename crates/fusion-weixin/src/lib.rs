@@ -23,11 +23,18 @@
 //! 明文纪律：secret / code 不落日志；错误日志仅打 channel 与错误类别。
 //! 携密纪律：`WeixinCredentials` 手写脱敏 Debug（secret 字段 `<REDACTED>`），
 //! MUST NOT derive(Debug)。
+//!
+//! xpay / 推送原语（p053 D4 增补，业务无关可复用）：`xpay`（双签名、
+//! stable_token、query_order 对账面）、`push`（消息推送验签 / AES 解密 /
+//! XML·JSON 事件解析 / 应答构造）。
+
+pub mod push;
+pub mod xpay;
 
 use std::fmt;
 use std::time::Duration;
 
-use fusion_security::wechat::{WechatAuthClient, WechatAuthError};
+use fusion_security::wechat::{MpSessionWithKey, WechatAuthClient, WechatAuthError};
 
 /// 单通道凭据（appid + secret 成对——半配在消费方装配期 fail-closed）。
 ///
@@ -128,6 +135,18 @@ impl WeixinLoginClient {
     Self { app, web, mp: None, auth: WechatAuthClient::new(endpoint_base, timeout), timeout }
   }
 
+  /// 小程序单面构造（p053 增——仅 MiniProgram 凭据的消费方（如小程序虚拟
+  /// 支付服务）免传空占位凭据；App / Web 面未配置，`exchange` 入口自检拒）。
+  pub fn mp_only(mp: WeixinCredentials, endpoint_base: &str, timeout: Duration) -> Self {
+    Self::new_with_mp(
+      WeixinCredentials::new(String::new(), String::new()),
+      WeixinCredentials::new(String::new(), String::new()),
+      Some(mp),
+      endpoint_base,
+      timeout,
+    )
+  }
+
   /// 三面构造（g032 增——App / Web / MiniProgram 凭据齐配；小程序面 `None`
   /// 语义同未配置凭据 = `exchange_mp` 入口自检拒）。
   pub fn new_with_mp(
@@ -185,6 +204,51 @@ impl WeixinLoginClient {
       .map_err(|_| WeixinError::Unavailable { message: "exchange timed out".to_string() })??;
     Ok(MpToken { openid: session.openid, unionid: session.unionid })
   }
+
+  /// 小程序 code 换**签名会话**（携 session_key 显式原语——虚拟支付双签名
+  /// 消费面；透出须经隐私评审的纪律落点）。session_key 仅内存态承载、签名
+  /// 后即弃（`MpSigningSession` 消费完由调用方 drop）。
+  pub async fn exchange_mp_with_session_key(&self, js_code: &str) -> Result<MpSigningSession, WeixinError> {
+    let Some(cred) = self.mp.as_ref().filter(|c| c.is_configured()) else {
+      return Err(WeixinError::Unavailable { message: "MiniProgram channel credentials not configured".to_string() });
+    };
+    let session =
+      tokio::time::timeout(self.timeout, self.auth.jscode_to_session_with_key(&cred.appid, &cred.secret, js_code))
+        .await
+        .map_err(|_| WeixinError::Unavailable { message: "exchange timed out".to_string() })??;
+    Ok(MpSigningSession::from(session))
+  }
+}
+
+/// `session_key` 携密新类型：脱敏 Debug + drop 清零（虚拟支付签名消费面——
+/// MUST NOT 落库 / 落日志；透出属显式例外原语，见模块头纪律）。
+#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+pub struct SessionKey(String);
+
+impl SessionKey {
+  /// 签名消费即弃的唯一透出点（按值取走，调用方不得保留引用）。
+  pub fn expose_for_signing(&self) -> &str {
+    &self.0
+  }
+}
+
+impl fmt::Debug for SessionKey {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str("SessionKey(<REDACTED>)")
+  }
+}
+
+impl From<MpSessionWithKey> for MpSigningSession {
+  fn from(session: MpSessionWithKey) -> Self {
+    Self { openid: session.openid, session_key: SessionKey(session.session_key) }
+  }
+}
+
+/// 小程序签名会话（xpay 双签名的身份 + 用户态密钥消费面）。
+#[derive(Clone, Debug)]
+pub struct MpSigningSession {
+  pub openid: String,
+  pub session_key: SessionKey,
 }
 
 #[cfg(test)]
@@ -387,6 +451,37 @@ mod tests {
   async fn exchange_mp_errcode_45011_maps_unavailable() {
     let (base, _) = spawn_mock(200, r#"{"errcode":45011,"errmsg":"api minute-quota"}"#.to_string()).await;
     let e = mp_client(&base).exchange_mp("js-code").await.unwrap_err();
+    assert!(matches!(e, WeixinError::Unavailable { .. }));
+  }
+
+  #[tokio::test]
+  async fn exchange_mp_with_session_key_signs_and_redacts() {
+    let (base, seen) = spawn_mock(200, r#"{"openid":"oMP","session_key":"sk-1"}"#.to_string()).await;
+    let c = WeixinLoginClient::mp_only(
+      WeixinCredentials::new("wx-mp".to_string(), "s-mp".to_string()),
+      &base,
+      Duration::from_secs(2),
+    );
+    assert!(c.is_configured_mp());
+    let session = c.exchange_mp_with_session_key("js-code").await.unwrap();
+    assert_eq!(session.openid, "oMP");
+    assert_eq!(session.session_key.expose_for_signing(), "sk-1");
+    let dbg = format!("{:?}", session.session_key);
+    assert!(dbg.contains("<REDACTED>") && !dbg.contains("sk-1"), "session_key 脱敏: {dbg}");
+    let req = seen.lock().await.remove(0);
+    assert!(req.contains("appid=wx-mp"), "mp 面凭据: {req}");
+  }
+
+  #[tokio::test]
+  async fn mp_only_unconfigured_entry_check_is_unavailable() {
+    // mp_only 空凭据：mp 面未配置 → 入口自检拒（不出站）。
+    let c = WeixinLoginClient::mp_only(
+      WeixinCredentials::new(String::new(), String::new()),
+      "http://127.0.0.1:1",
+      Duration::from_secs(1),
+    );
+    assert!(!c.is_configured_mp());
+    let e = c.exchange_mp_with_session_key("js-code").await.unwrap_err();
     assert!(matches!(e, WeixinError::Unavailable { .. }));
   }
 
