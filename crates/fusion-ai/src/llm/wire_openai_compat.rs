@@ -729,7 +729,7 @@ mod tests {
   #[test]
   fn deepseek_forced_function_disables_thinking() {
     // 回归：DeepSeek V4 思考模式拒绝强制 tool_choice（HTTP 400）；强制具名函数时须关 thinking。
-    let mut body = build_request_body("deepseek-v4-flash", &sample_req());
+    let mut body = build_request_body("deepseek-flash", &sample_req());
     maybe_disable_thinking(&mut body, LlmProviderId::DeepSeek, sample_req().tool_choice.as_ref());
     assert_eq!(body["thinking"]["type"], "disabled");
     // 强制 tool_choice 仍保留（非思考模式下合法）。
@@ -740,7 +740,7 @@ mod tests {
   fn deepseek_required_disables_thinking() {
     let mut req = sample_req();
     req.tool_choice = Some(ToolChoice::Required);
-    let mut body = build_request_body("deepseek-v4-flash", &req);
+    let mut body = build_request_body("deepseek-flash", &req);
     maybe_disable_thinking(&mut body, LlmProviderId::DeepSeek, req.tool_choice.as_ref());
     assert_eq!(body["thinking"]["type"], "disabled");
   }
@@ -750,7 +750,7 @@ mod tests {
     // auto/none 未强制 → 不触发不兼容 → 不注入 thinking（保留 vendor 默认行为）。
     let mut req = sample_req();
     req.tool_choice = Some(ToolChoice::Auto);
-    let mut body = build_request_body("deepseek-v4-flash", &req);
+    let mut body = build_request_body("deepseek-flash", &req);
     maybe_disable_thinking(&mut body, LlmProviderId::DeepSeek, req.tool_choice.as_ref());
     assert!(body.get("thinking").is_none());
   }

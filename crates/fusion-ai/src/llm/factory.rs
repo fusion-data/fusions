@@ -303,7 +303,7 @@ mod tests {
   #[test]
   fn provider_default_model_table() {
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::Qwen), "qwen3.7-plus");
-    assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::DeepSeek), "deepseek-v4-flash");
+    assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::DeepSeek), "deepseek-flash");
     assert_eq!(LlmProviderConfig::provider_default_model(LlmProviderId::OpenAi), "gpt-4o-mini");
   }
 
@@ -359,7 +359,7 @@ mod tests {
   fn deepseek_from_parts_fills_defaults() {
     let cfg = LlmProviderConfig::deepseek_from_parts("sk-x", None, None, None).unwrap();
     assert!(
-      matches!(cfg, LlmProviderConfig::DeepSeek { ref default_chat_model, .. } if default_chat_model == "deepseek-v4-flash")
+      matches!(cfg, LlmProviderConfig::DeepSeek { ref default_chat_model, .. } if default_chat_model == "deepseek-flash")
     );
   }
 }

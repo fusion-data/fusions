@@ -417,7 +417,7 @@ mod tests {
       feature_code: "chat".into(),
       matched_scope,
       provider: "deepseek".into(),
-      model: "deepseek-v4-flash".into(),
+      model: "deepseek-flash".into(),
       credential_id: Some(Uuid::now_v7()),
       session_id: Some(Uuid::now_v7()),
       request_kind: "ai_chat".into(),

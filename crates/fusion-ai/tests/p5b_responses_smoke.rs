@@ -119,7 +119,7 @@ async fn deepseek_responses_smoke() {
     "deepseek",
     "https://api.deepseek.com",
     &api_key,
-    "deepseek-v4-flash",
+    "deepseek-flash",
     serde_json::json!({"reasoning": {"effort": "minimal"}}),
   )
   .await;

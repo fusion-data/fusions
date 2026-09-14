@@ -1,6 +1,8 @@
 //! DeepSeek 官方 OpenAI 兼容 endpoint 实现。
 //!
-//! 默认 endpoint：`https://api.deepseek.com/v1`，model `deepseek-v4-flash`。
+//! 默认 endpoint：`https://api.deepseek.com/v1`，model `deepseek-flash`
+//! （2026-09-14 官方 /models 实测仅 deepseek-flash 与 deepseek-v4-pro——原默认
+//! deepseek-v4-flash 已随官方目录下线，发该名会被 Model Not Exist 拒绝）。
 //! 国内反向代理 / 私有化部署可通过 `endpoint` 覆盖。
 
 use std::time::Duration;
@@ -10,7 +12,7 @@ use async_trait::async_trait;
 use crate::llm::wire_openai_compat::OpenAiCompatTransport;
 use crate::llm::{ChatCompletionRequest, ChatCompletionResponse, LlmChatProvider, LlmError, LlmProviderId};
 
-pub const DEFAULT_MODEL_DEEPSEEK: &str = "deepseek-v4-flash";
+pub const DEFAULT_MODEL_DEEPSEEK: &str = "deepseek-flash";
 pub const DEFAULT_ENDPOINT_DEEPSEEK: &str = "https://api.deepseek.com/v1";
 
 #[derive(Debug, Clone)]
@@ -67,7 +69,7 @@ mod tests {
 
   #[test]
   fn deepseek_default_model_is_deepseek_chat() {
-    assert_eq!(DEFAULT_MODEL_DEEPSEEK, "deepseek-v4-flash");
+    assert_eq!(DEFAULT_MODEL_DEEPSEEK, "deepseek-flash");
   }
 
   #[test]
