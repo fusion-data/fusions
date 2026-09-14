@@ -226,7 +226,10 @@ impl WeixinLoginClient {
 pub struct SessionKey(String);
 
 impl SessionKey {
-  /// 签名消费即弃的唯一透出点（按值取走，调用方不得保留引用）。
+  /// 签名消费的透出面（借用面——签名处即用即弃的消费惯例）。「不落库 / 落日志
+  /// 即清零」的物理保证 = 本类型 `ZeroizeOnDrop`（Drop 时清零宿主内存）；经此
+  /// 引用复制出的副本不在该纪律内，须调用方自持约束（复制面 = 签名函数入参的
+  /// 瞬时生命周期，本 crate 消费路径均如此）。
   pub fn expose_for_signing(&self) -> &str {
     &self.0
   }
