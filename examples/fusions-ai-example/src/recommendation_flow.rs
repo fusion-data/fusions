@@ -24,7 +24,7 @@ fn get_chat_model() -> anyhow::Result<CompletionModel> {
   let client = fusions::ai::providers::openai_compatible::Client::builder(&api_key)
     .base_url("https://api.deepseek.com")
     .build();
-  Ok(client.chat_completions_model("deepseek-v4-flash"))
+  Ok(client.chat_completions_model("deepseek-flash"))
 }
 
 async fn chat_once(model: &CompletionModel, prompt: &str, history: Vec<core_types::Message>) -> anyhow::Result<String> {

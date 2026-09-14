@@ -73,7 +73,7 @@ use fusions::ai::providers::openai_compatible::completion::{CompletionModel, Com
 let client = Client::builder(&api_key).base_url("https://api.deepseek.com").build();
 
 // Chat Completions（thinking 关闭等 provider 参数经 additional_params 注入 extra-body）
-let model: CompletionModel = client.chat_completions_model("deepseek-v4-flash");
+let model: CompletionModel = client.chat_completions_model("deepseek-flash");
 let request = CompletionRequest::from_history(
     model.model(),                       // 或任意 model 覆盖
     Some("You are a helpful assistant".into()),  // preamble → system 消息打头

@@ -33,7 +33,7 @@ fn get_chat_model() -> anyhow::Result<CompletionModel> {
     .base_url("https://api.deepseek.com")
     .build();
 
-  Ok(client.chat_completions_model("deepseek-v4-flash"))
+  Ok(client.chat_completions_model("deepseek-flash"))
 }
 
 /// 单轮 chat：history + prompt → 补全文本（等价原 rig agent.chat 的语义）。

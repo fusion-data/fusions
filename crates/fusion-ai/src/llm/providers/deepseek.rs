@@ -1,8 +1,7 @@
 //! DeepSeek 官方 OpenAI 兼容 endpoint 实现。
 //!
 //! 默认 endpoint：`https://api.deepseek.com/v1`，model `deepseek-flash`
-//! （2026-09-14 官方 /models 实测仅 deepseek-flash 与 deepseek-v4-pro——原默认
-//! deepseek-v4-flash 已随官方目录下线，发该名会被 Model Not Exist 拒绝）。
+//! （2026-09-14 官方 /models 实测仅 deepseek-flash 与 deepseek-v4-pro）。
 //! 国内反向代理 / 私有化部署可通过 `endpoint` 覆盖。
 
 use std::time::Duration;
