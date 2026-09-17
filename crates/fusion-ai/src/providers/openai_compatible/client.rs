@@ -5,8 +5,10 @@
 //! use fusion_ai::providers::openai_compatible::Client;
 //!
 //! let client = Client::new("YOUR_API_KEY");
-//! // 默认 Responses 形态；仅支持 chat completions 的端点（Moonshot 等）走 chat_completions_model
-//! let model = client.chat_completions_model("moonshot-v1-8k");
+//! // Chat Completions 形态（通用/老 API；兼容仅支持 chat completions 的端点，如 Moonshot）
+//! let chat = client.completion_model("moonshot-v1-8k");
+//! // Responses API 形态（deepseek / dashscope 等已原生支持）
+//! let responses = client.responses_model("deepseek-chat");
 //! ```
 
 use serde::Deserialize;
@@ -154,32 +156,33 @@ impl Client {
 impl Client {
   // —— 具体 model 工厂方法（原 rig client trait 的本地化形态）——
 
-  /// 默认 Responses 形态的 completion model；Chat Completions 经 `.completions_api()` 切换。
+  /// Chat Completions 形态的 completion model（通用 / 老 API 语义；兼容仅支持
+  /// chat completions 的端点，如 Moonshot）。
   ///
   /// # Example
   /// ```
   /// use fusion_ai::providers::openai_compatible::Client;
   ///
   /// let openai = Client::new("your-open-ai-api-key");
-  /// let model = openai.completion_model("gpt-4o");
+  /// let chat = openai.completion_model("gpt-4o");
   /// ```
-  pub fn completion_model(&self, model: impl Into<String>) -> super::responses_api::ResponsesCompletionModel {
-    let model = model.into();
-    super::responses_api::ResponsesCompletionModel::new(self.clone(), &model)
-  }
-
-  /// Chat Completions 形态的 completion model（Moonshot 等仅支持 chat completions 的端点）。
-  ///
-  /// # Example
-  /// ```
-  /// use fusion_ai::providers::openai_compatible::Client;
-  ///
-  /// let openai = Client::new("your-open-ai-api-key");
-  /// let chat = openai.chat_completions_model("moonshot-v1-8k");
-  /// ```
-  pub fn chat_completions_model(&self, model: impl Into<String>) -> CompletionModel {
+  pub fn completion_model(&self, model: impl Into<String>) -> CompletionModel {
     let model = model.into();
     CompletionModel::new(self.clone(), &model)
+  }
+
+  /// Responses API 形态的 completion model（deepseek / dashscope 等已原生支持）。
+  ///
+  /// # Example
+  /// ```
+  /// use fusion_ai::providers::openai_compatible::Client;
+  ///
+  /// let openai = Client::new("your-open-ai-api-key");
+  /// let responses = openai.responses_model("gpt-4o");
+  /// ```
+  pub fn responses_model(&self, model: impl Into<String>) -> super::responses_api::ResponsesCompletionModel {
+    let model = model.into();
+    super::responses_api::ResponsesCompletionModel::new(self.clone(), &model)
   }
 
   pub fn embedding_model(&self, model: impl Into<String>) -> EmbeddingModel {

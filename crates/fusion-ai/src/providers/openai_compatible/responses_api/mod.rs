@@ -1,12 +1,12 @@
 //! The OpenAI Responses API（类型本地化）。
 //!
-//! `Client::completion_model()` 默认返回本模块的 Responses 模型；
-//! `.completions_api()` 显式切回 Chat Completions。
+//! `Client::responses_model()` 返回本模块的 Responses 模型；
+//! Chat Completions 形态走 `Client::completion_model()`（兼容仅支持 chat completions 的端点）。
 //! ```rust
 //! use fusion_ai::providers::openai_compatible::Client;
 //!
 //! let openai_client = Client::new("YOUR_API_KEY");
-//! let model = openai_client.completion_model("gpt-4o").completions_api();
+//! let model = openai_client.responses_model("gpt-4o");
 //! ```
 use std::convert::Infallible;
 use std::ops::Add;
@@ -608,11 +608,6 @@ impl ResponsesCompletionModel {
   /// Creates a new [`ResponsesCompletionModel`].
   pub fn new(client: Client, model: &str) -> Self {
     Self { client, model: model.to_string() }
-  }
-
-  /// Use the Completions API instead of Responses.
-  pub fn completions_api(self) -> crate::providers::openai_compatible::completion::CompletionModel {
-    crate::providers::openai_compatible::completion::CompletionModel::new(self.client, &self.model)
   }
 }
 

@@ -5,8 +5,9 @@
 //! use fusion_ai::providers::openai_compatible::Client;
 //!
 //! let client = Client::new("YOUR_API_KEY");
-//! // 默认 Responses 形态；`.completions_api()` 显式切 Chat Completions
-//! let model = client.completion_model("gpt-4o").completions_api();
+//! // Chat Completions 形态（通用 / 老 API）；Responses API 形态走 responses_model()
+//! let chat = client.completion_model("gpt-4o");
+//! let responses = client.responses_model("gpt-4o");
 //! ```
 pub mod client;
 pub mod completion;

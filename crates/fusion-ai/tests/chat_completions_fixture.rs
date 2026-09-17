@@ -18,13 +18,13 @@ use fusion_ai::providers::openai_compatible::types as core;
 use fusion_ai::providers::openai_compatible::types::ToolChoice as CoreToolChoice;
 use fusion_ai::providers::openai_compatible::{AssistantContent, Client, Message};
 
-/// 构造指向 mock server 的 Chat Completions 模型（Kimi 等端点形态：显式 completions_api）。
+/// 构造指向 mock server 的 Chat Completions 模型（Kimi 等仅支持 chat completions 的端点）。
 async fn chat_model(
   server: &MockServer,
   model: &str,
 ) -> fusion_ai::providers::openai_compatible::completion::CompletionModel {
   let client = Client::builder(API_KEY).base_url(server.uri().as_str()).build();
-  client.completion_model(model).completions_api()
+  client.completion_model(model)
 }
 
 // ================================================================

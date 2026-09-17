@@ -67,7 +67,7 @@ async fn mount_once(server: &MockServer, body: Value) {
 /// `providers::openai_compatible` wire（非流式 CompletionModel）的 cache 命中数。
 async fn openai_compatible_cached(server: &MockServer) -> u64 {
   let client = Client::builder(API_KEY).base_url(server.uri().as_str()).build();
-  let model = client.completion_model("m").completions_api();
+  let model = client.completion_model("m");
   let request =
     fixture_common::chat_request("m", None, vec![core::Message::user("Hi")], vec![], None, None, None, None);
   let response = model.completion(request).await.expect("completion succeeds");

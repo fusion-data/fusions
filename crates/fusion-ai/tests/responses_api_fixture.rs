@@ -20,13 +20,13 @@ use fusion_ai::providers::openai_compatible::responses_api::{
 };
 use fusion_ai::providers::openai_compatible::types as core;
 
-/// 构造指向 mock server 的 Responses 模型（`completion_model` 默认即 Responses 形态）。
+/// 构造指向 mock server 的 Responses 模型（`responses_model` 显式选择 Responses 形态）。
 async fn responses_model(
   server: &MockServer,
   model: &str,
 ) -> fusion_ai::providers::openai_compatible::responses_api::ResponsesCompletionModel {
   let client = Client::builder(API_KEY).base_url(server.uri().as_str()).build();
-  client.completion_model(model)
+  client.responses_model(model)
 }
 
 // ================================================================

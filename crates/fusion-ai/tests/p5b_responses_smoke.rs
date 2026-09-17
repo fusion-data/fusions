@@ -21,7 +21,7 @@ use fusion_ai::providers::openai_compatible::types as core;
 /// 单端点 smoke：非流式 chat + 流式 stream，返回 (text, usage 描述, 延迟)。
 async fn smoke_endpoint(name: &str, base_url: &str, api_key: &str, model: &str, reasoning_off: serde_json::Value) {
   let client = Client::builder(api_key).base_url(base_url).build();
-  let responses_model = client.completion_model(model);
+  let responses_model = client.responses_model(model);
 
   // —— 非流式：reasoning.effort=none 关思考（DashScope 官方口径；DeepSeek 真机验证点）——
   let request = CompletionRequest::from_history(
