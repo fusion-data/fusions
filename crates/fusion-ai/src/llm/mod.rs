@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 pub mod factory;
 pub mod metered;
 pub mod providers;
+pub mod usage_batch;
 pub mod wire_openai_compat;
 
 pub use factory::{LlmProviderConfig, build_provider};
