@@ -25,6 +25,12 @@ use crate::utils::parse_rpc_path;
 /// Returning `Err(())` yields the standard 401 response; resolver mode keeps
 /// the same anti-forgery guarantees: returned header names are stripped from
 /// the inbound request before injection, and unparseable values fail closed.
+///
+/// The error type is deliberately `()`: at the middleware layer every failure
+/// (unknown / expired / revoked token) maps to the same 401, and the resolver
+/// is expected to do its own logging for the failures it can distinguish.
+/// widening this to a structured error later is a breaking change — introduce
+/// it only when a downstream actually needs to branch on the failure kind.
 #[fusion_core::async_trait]
 pub trait AuthTokenResolver: Send + Sync + 'static {
   async fn resolve(&self, token: &str) -> Result<Vec<(&'static str, String)>, ()>;

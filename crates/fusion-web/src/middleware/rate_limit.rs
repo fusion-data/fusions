@@ -45,8 +45,11 @@ impl RateLimiterInner {
       bucket.tokens -= 1.0;
       (true, 0)
     } else {
+      // refill = 0(一次性配额)时 need/refill = inf → as u64 饱和为 MAX;
+      // Retry-After 上限 3600s(HTTP 语义上更大的值无意义,也防离谱头输出)
       let need = 1.0 - bucket.tokens;
-      (false, (need / self.refill_per_sec).ceil().max(1.0) as u64)
+      let retry_after = (need / self.refill_per_sec).ceil().clamp(1.0, 3600.0) as u64;
+      (false, retry_after)
     }
   }
 }
@@ -68,6 +71,9 @@ pub struct RateLimiter {
 
 impl RateLimiter {
   /// IP 维度限流:`burst` = 瞬时容量,`per_minute` = 每分钟补充令牌数。
+  ///
+  /// `per_minute = 0` 是合法配置(语义 = 一次性配额:burst 耗尽后永久拒绝,
+  /// 不再补充);此时超限响应的 `Retry-After` 按上限 3600s 报告。
   pub fn per_ip(burst: u32, per_minute: u32) -> Self {
     Self {
       inner: Arc::new(RateLimiterInner {
@@ -228,5 +234,15 @@ mod tests {
     assert!(AsyncAuthorizeRequest::<Body>::authorize(&mut l, r).await.is_ok());
     let r2 = Request::builder().method("POST").uri("/x").body(Body::empty()).unwrap();
     assert!(AsyncAuthorizeRequest::<Body>::authorize(&mut l, r2).await.is_err());
+  }
+
+  #[tokio::test]
+  async fn zero_refill_is_one_shot_quota_with_capped_retry_after() {
+    // per_minute = 0:burst 耗尽后永久拒绝;Retry-After 夹在 3600(不输出 inf→u64::MAX)
+    let mut limiter = RateLimiter::per_ip(1, 0);
+    assert!(run(&mut limiter, req_with_ip("6.6.6.6")).await.is_ok());
+    let resp = run(&mut limiter, req_with_ip("6.6.6.6")).await.unwrap_err();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(resp.headers().get(header::RETRY_AFTER).unwrap(), "3600");
   }
 }

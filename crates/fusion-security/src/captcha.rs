@@ -30,7 +30,7 @@ struct InflightAnswer {
 }
 
 /// 进程内一次性验证码存储(`Clone` 语义 = 共享同一存储,适合随服务状态分发)。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CaptchaStore {
   inner: std::sync::Arc<Mutex<HashMap<String, InflightAnswer>>>,
   ttl: Duration,
@@ -76,6 +76,14 @@ impl CaptchaStore {
       return false;
     }
     stored.answer == answer.trim()
+  }
+}
+
+/// `Default` 与 [`CaptchaStore::new`] 同语义(默认 TTL)——derive 的 `Default`
+/// 会把 `ttl` 置零使所有挑战立即过期,故手写。
+impl Default for CaptchaStore {
+  fn default() -> Self {
+    Self::new()
   }
 }
 
@@ -147,6 +155,15 @@ mod tests {
     let (a, b) = expr_operands(&c.svg);
     std::thread::sleep(Duration::from_millis(60));
     assert!(!store.verify(&c.id, &(a + b).to_string()), "expired challenge rejected");
+  }
+
+  #[test]
+  fn default_matches_new_ttl() {
+    // 手写 Default 防 ttl=0 回归(derive 会把 Duration 置零使挑战立即过期)
+    let d = CaptchaStore::default();
+    let c = d.generate();
+    let (a, b) = expr_operands(&c.svg);
+    assert!(d.verify(&c.id, &(a + b).to_string()), "default() must use DEFAULT_TTL, not zero");
   }
 
   #[test]
