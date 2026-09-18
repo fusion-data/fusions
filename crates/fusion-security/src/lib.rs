@@ -1,5 +1,6 @@
 //! fusion-security 安全模块
 
+pub mod captcha;
 pub mod error;
 pub mod jwt;
 pub mod pwd;

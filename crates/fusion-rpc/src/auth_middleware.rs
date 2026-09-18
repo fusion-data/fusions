@@ -10,9 +10,25 @@ use fusion_core::security::SecurityUtils;
 use http::{Request, Response, StatusCode};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use tower_http::auth::{AsyncAuthorizeRequest, AsyncRequireAuthorizationLayer};
 
 use crate::utils::parse_rpc_path;
+
+/// Resolves an opaque bearer token (e.g. a self-managed session token stored
+/// server-side) into the identity headers to inject downstream.
+///
+/// This is the alternative to the JWE mode: when [`AuthLayer`] is built via
+/// [`AuthLayer::with_token_resolver`], the token is NOT decrypted as a JWT —
+/// the resolver fully owns validation (existence, expiry, revocation) and
+/// returns the trusted identity headers (e.g. `[("x-account-id", "42")]`).
+/// Returning `Err(())` yields the standard 401 response; resolver mode keeps
+/// the same anti-forgery guarantees: returned header names are stripped from
+/// the inbound request before injection, and unparseable values fail closed.
+#[fusion_core::async_trait]
+pub trait AuthTokenResolver: Send + Sync + 'static {
+  async fn resolve(&self, token: &str) -> Result<Vec<(&'static str, String)>, ()>;
+}
 
 /// Describes how to extract a JWT claim and inject it as a request header.
 #[derive(Clone, Copy, Debug)]
@@ -118,27 +134,45 @@ impl Default for AuthConfig {
 /// AuthLayer extracts JWT claims and injects trusted identity headers.
 ///
 /// Business-agnostic — all specifics come from `AuthConfig`.
+///
+/// Two token modes:
+/// - JWE mode ([`AuthLayer::new`]): token is a JWE, claims mapped per `claim_mappings`.
+/// - Opaque-token mode ([`AuthLayer::with_token_resolver`]): token is validated by an
+///   [`AuthTokenResolver`] (e.g. server-side session table lookup with revocation),
+///   which also produces the identity headers.
 #[derive(Clone)]
 pub struct AuthLayer {
-  security: SecuritySetting,
+  security: Option<SecuritySetting>,
   config: AuthConfig,
+  resolver: Option<Arc<dyn AuthTokenResolver>>,
 }
 
 impl AuthLayer {
   pub fn new(security: SecuritySetting, config: AuthConfig) -> Self {
-    Self { security, config }
+    Self { security: Some(security), config, resolver: None }
+  }
+
+  /// Opaque-token (self-managed session) mode — no JWE decryption happens;
+  /// the resolver owns validation and identity production.
+  pub fn with_token_resolver(config: AuthConfig, resolver: Arc<dyn AuthTokenResolver>) -> Self {
+    Self { security: None, config, resolver: Some(resolver) }
   }
 
   pub fn into_middleware(self) -> AsyncRequireAuthorizationLayer<AuthAuthorizer> {
-    AsyncRequireAuthorizationLayer::new(AuthAuthorizer { security: self.security, config: self.config })
+    AsyncRequireAuthorizationLayer::new(AuthAuthorizer {
+      security: self.security,
+      config: self.config,
+      resolver: self.resolver,
+    })
   }
 }
 
 /// The actual authorizer that processes each request.
 #[derive(Clone)]
 pub struct AuthAuthorizer {
-  security: SecuritySetting,
+  security: Option<SecuritySetting>,
   config: AuthConfig,
+  resolver: Option<Arc<dyn AuthTokenResolver>>,
 }
 
 impl AsyncAuthorizeRequest<Body> for AuthAuthorizer {
@@ -149,6 +183,7 @@ impl AsyncAuthorizeRequest<Body> for AuthAuthorizer {
   fn authorize(&mut self, mut request: Request<Body>) -> Self::Future {
     let security = self.security.clone();
     let config = self.config;
+    let resolver = self.resolver.clone();
     Box::pin(async move {
       let path = request.uri().path().to_string();
       let preserve_identity_headers =
@@ -209,9 +244,37 @@ impl AsyncAuthorizeRequest<Body> for AuthAuthorizer {
         );
       }
 
-      // Extract and decrypt JWT
+      // Extract bearer/cookie token, then dispatch by token mode
       let token = extract_bearer_token(request.headers(), config.cookie_token_name)
         .map_err(|msg| unauthorized_response(&config, &msg))?;
+
+      // Opaque-token mode: the resolver owns validation (existence / expiry / revocation,
+      // e.g. a server-side session table lookup) and produces the identity headers.
+      if let Some(resolver) = resolver {
+        let identity =
+          resolver.resolve(&token).await.map_err(|_| unauthorized_response(&config, config.error_message))?;
+        let headers = request.headers_mut();
+        for (name, value) in identity {
+          // Anti-forgery: strip a caller-forged value of the same name before injecting.
+          headers.remove(name);
+          match value.parse() {
+            Ok(hv) => {
+              headers.insert(name, hv);
+            }
+            Err(_) => {
+              log::warn!(
+                target: "fusion_rpc::auth",
+                "auth: rejecting request — resolver identity header '{name}' is not valid ASCII"
+              );
+              return Err(unauthorized_response(&config, config.error_message));
+            }
+          }
+        }
+        return Ok(request);
+      }
+
+      // JWE mode (resolver absent; security is always Some here by construction)
+      let security = security.ok_or_else(|| unauthorized_response(&config, config.error_message))?;
 
       let (payload, _) = SecurityUtils::decrypt_jwt(security.pwd(), &token)
         .map_err(|_| unauthorized_response(&config, config.error_message))?;
@@ -371,7 +434,7 @@ mod tests {
   async fn test_valid_token_injects_headers() {
     let security = test_security();
     let token = make_test_token(&security, make_payload());
-    let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(security.clone()), config: test_config(), resolver: None };
     let req = make_request(
       "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("authorization", format!("Bearer {}", token).as_str())],
@@ -389,7 +452,7 @@ mod tests {
   #[tokio::test]
   async fn test_exempt_rpc_strips_spoofed_identity_headers() {
     let security = test_security();
-    let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(security.clone()), config: test_config(), resolver: None };
     let req = make_request(
       "/myapp.auth.v1.AuthService/Login",
       vec![
@@ -415,7 +478,7 @@ mod tests {
       preserve_identity_headers_for_paths: &["/agent-api/"],
       ..test_config()
     };
-    let mut authorizer = AuthAuthorizer { security: security.clone(), config };
+    let mut authorizer = AuthAuthorizer { security: Some(security.clone()), config, resolver: None };
     let req = make_request(
       "/agent-api/myapp.provider_credential.v1.ProviderCredentialService/ListProviders",
       vec![("x-tenant-id", "tenant-1"), ("x-user-id", "user-1")],
@@ -438,7 +501,7 @@ mod tests {
         .as_secs() as i64,
     );
     let token = make_test_token(&security, payload);
-    let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(security.clone()), config: test_config(), resolver: None };
     let req = make_request(
       "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("authorization", format!("Bearer {}", token).as_str())],
@@ -450,7 +513,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_exempt_path_passes() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = make_request("/health", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
@@ -458,7 +521,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_exempt_rpc_passes() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = make_request("/myapp.auth.v1.AuthService/Login", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_ok());
@@ -466,7 +529,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_missing_authorization_returns_401() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
@@ -476,7 +539,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_invalid_bearer_scheme_returns_401() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req =
       make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("authorization", "Basic dXNlcjpwYXNz")]);
     let result = authorizer.authorize(req).await;
@@ -489,7 +552,7 @@ mod tests {
   async fn test_cookie_token_uses_configured_name() {
     let security = test_security();
     let token = make_test_token(&security, make_payload());
-    let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(security.clone()), config: test_config(), resolver: None };
     let req = make_request(
       "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("cookie", format!("app_access_token={}", token).as_str())],
@@ -503,7 +566,7 @@ mod tests {
   async fn test_cookie_token_wrong_name_returns_401() {
     let security = test_security();
     let token = make_test_token(&security, make_payload());
-    let mut authorizer = AuthAuthorizer { security: security.clone(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(security.clone()), config: test_config(), resolver: None };
     // Cookie present but under the framework-default name, while config
     // expects `app_access_token` — must be treated as missing auth.
     let req = make_request(
@@ -534,7 +597,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_trusted_subject_admitted_only_for_whitelisted_rpc() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = trusted_subject_request("/myapp.permission.v1.PermissionService/ListUsersByPermission");
     let result = authorizer.authorize(req).await.expect("whitelisted trusted subject is admitted");
     // The forged inbound header was stripped and replaced by the subject's own value.
@@ -546,7 +609,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_trusted_subject_outside_whitelist_still_401() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = trusted_subject_request("/myapp.resident.v1.ResidentService/ListResidents");
     let result = authorizer.authorize(req).await;
     assert!(result.is_err(), "an off-whitelist RPC MUST NOT be reachable by a trusted subject");
@@ -556,7 +619,7 @@ mod tests {
   #[tokio::test]
   async fn test_whitelisted_rpc_without_trusted_subject_still_401() {
     // The whitelist does NOT make the RPC anonymous.
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = make_request("/myapp.permission.v1.PermissionService/ListUsersByPermission", vec![]);
     let result = authorizer.authorize(req).await;
     assert!(result.is_err());
@@ -565,7 +628,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_trusted_subject_with_unrepresentable_header_is_refused() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let mut req = make_request("/myapp.permission.v1.PermissionService/ListUsersByPermission", vec![]);
     req.extensions_mut().insert(TrustedSubject {
       principal: "sibling-bin:system".to_string(),
@@ -580,7 +643,7 @@ mod tests {
 
   #[tokio::test]
   async fn test_invalid_token_returns_401() {
-    let mut authorizer = AuthAuthorizer { security: test_security(), config: test_config() };
+    let mut authorizer = AuthAuthorizer { security: Some(test_security()), config: test_config(), resolver: None };
     let req = make_request(
       "/myapp.resident.v1.ResidentService/ListResidents",
       vec![("authorization", "Bearer not-a-valid-token")],
@@ -589,5 +652,78 @@ mod tests {
     assert!(result.is_err());
     let response = result.unwrap_err();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+  }
+
+  // ---- Opaque-token (AuthTokenResolver) mode ----
+
+  struct FixedResolver {
+    valid_token: &'static str,
+  }
+
+  #[fusion_core::async_trait]
+  impl AuthTokenResolver for FixedResolver {
+    async fn resolve(&self, token: &str) -> Result<Vec<(&'static str, String)>, ()> {
+      if token == self.valid_token { Ok(vec![("x-account-id", "42".to_string())]) } else { Err(()) }
+    }
+  }
+
+  fn resolver_authorizer() -> AuthAuthorizer {
+    AuthAuthorizer {
+      security: None,
+      config: test_config(),
+      resolver: Some(Arc::new(FixedResolver { valid_token: "session-token" })),
+    }
+  }
+
+  #[tokio::test]
+  async fn test_resolver_valid_token_injects_headers() {
+    let mut authorizer = resolver_authorizer();
+    let req =
+      make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("authorization", "Bearer session-token")]);
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().headers().get("x-account-id").unwrap(), "42");
+  }
+
+  #[tokio::test]
+  async fn test_resolver_rejects_unknown_token() {
+    let mut authorizer = resolver_authorizer();
+    let req = make_request(
+      "/myapp.resident.v1.ResidentService/ListResidents",
+      vec![("authorization", "Bearer not-the-session-token")],
+    );
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
+  }
+
+  #[tokio::test]
+  async fn test_resolver_strips_forged_identity_header() {
+    // A caller forging x-account-id must not survive: the resolver's value wins.
+    let mut authorizer = resolver_authorizer();
+    let req = make_request(
+      "/myapp.resident.v1.ResidentService/ListResidents",
+      vec![("authorization", "Bearer session-token"), ("x-account-id", "forged-7")],
+    );
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().headers().get("x-account-id").unwrap(), "42");
+  }
+
+  #[tokio::test]
+  async fn test_resolver_unparseable_identity_fails_closed() {
+    struct BadValueResolver;
+    #[fusion_core::async_trait]
+    impl AuthTokenResolver for BadValueResolver {
+      async fn resolve(&self, _token: &str) -> Result<Vec<(&'static str, String)>, ()> {
+        Ok(vec![("x-account-id", "42\n43".to_string())])
+      }
+    }
+    let mut authorizer =
+      AuthAuthorizer { security: None, config: test_config(), resolver: Some(Arc::new(BadValueResolver)) };
+    let req =
+      make_request("/myapp.resident.v1.ResidentService/ListResidents", vec![("authorization", "Bearer session-token")]);
+    let result = authorizer.authorize(req).await;
+    assert!(result.is_err(), "an unparseable resolver identity MUST fail closed, not be dropped");
   }
 }
