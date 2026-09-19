@@ -61,10 +61,13 @@ openai_compatible wire。
 
 ## openai_compatible —— OpenAI 兼容 wire（唯一 LLM wire）
 
-DeepSeek / Moonshot / Qwen / OpenAI 四端的统一 wire。`Client::completion_model()`
-默认返回 **Responses** 形态模型；`.completions_api()` 或
-`Client::chat_completions_model()` 显式切 **Chat Completions**
-（Moonshot 仅支持后者，fusion-ai-de-rig.md §4.1 支持矩阵）。
+DeepSeek / Moonshot / Qwen / OpenAI 四端的统一 wire。模型工厂 API 已**按形态分化**
+（`chat_completions_model()` 与 `completions_api()` 已删）：
+
+- `Client::completion_model(model)` → `completion::CompletionModel`（**Chat
+  Completions** 形态——通用基线，仅支持 chat 的端点如 Moonshot 直接可用）
+- `Client::responses_model(model)` → `responses_api::ResponsesCompletionModel`
+  （**Responses** 形态——Qwen 关思考 / 结构化输出等高级面）
 
 ```rust
 use fusions::ai::providers::openai_compatible::{Client, types as core};
@@ -72,8 +75,9 @@ use fusions::ai::providers::openai_compatible::completion::{CompletionModel, Com
 
 let client = Client::builder(&api_key).base_url("https://api.deepseek.com").build();
 
-// Chat Completions（thinking 关闭等 provider 参数经 additional_params 注入 extra-body）
-let model: CompletionModel = client.chat_completions_model("deepseek-flash");
+// Chat Completions（completion_model 即此形态——thinking 关闭等 provider 参数
+// 经 additional_params 注入 extra-body；max_tokens 是一等字段，输出硬闸）
+let model: CompletionModel = client.completion_model("deepseek-flash");
 let request = CompletionRequest::from_history(
     model.model(),                       // 或任意 model 覆盖
     Some("You are a helpful assistant".into()),  // preamble → system 消息打头
@@ -91,7 +95,7 @@ let calls = response.tool_calls();       // &[ToolCall]
 
 // Responses 形态（Qwen 关思考用 reasoning.effort="none"）
 use fusions::ai::providers::openai_compatible::responses_api;
-let responses_model = client.completion_model("qwen3.7-plus");
+let responses_model = client.responses_model("qwen3.7-plus");
 let request = responses_api::CompletionRequest::from_history(
     "qwen3.7-plus", None, vec![core::Message::user("你好")],
     vec![], None, None, Some(131_072),
@@ -296,6 +300,35 @@ let provider: Arc<dyn LlmChatProvider> =
 > `audio_duration_ms` 在 `from_ctx_audio` 里是 `i64` 而非 `Option`：provider 没回时长时
 > MUST **不记这一行**，而不是记一行空的。
 
+### `llm::usage_batch` —— 计量事件批量落库管道
+
+`metered` 只定捕获缝（`AiUsageSink` trait + `NoopUsageSink`）；`usage_batch` 补上
+「批量、有界重试、best-effort durability」的通用管道——**DB 写函数由消费方注入**
+（闭包内自行持有 DB 句柄），本模块不依赖任何数据库面：
+
+```rust
+use fusions::ai::llm::usage_batch::spawn_usage_batch_writer;
+
+let pipeline = spawn_usage_batch_writer(1024, move |batch: Vec<AiUsageEvent>| async move {
+    usage_repo::insert_batch(&dbx, &batch).await        // Err(String) = 本批失败 → 重试
+});
+let provider = Arc::new(MeteredLlmProvider::new(inner, usage_ctx, pipeline.sink.clone()));
+// … 关机：drop 全部 sink clone 之后 await writer
+drop(provider);
+pipeline.writer.await?;
+```
+
+行为参数：单批上限 **64**（收一条后贪婪补满）；写重试 **3 次**（退避 50ms →
+200ms），耗尽 log + drop（**不重入队**——持续失败的写目标不能让队列无界增长）；
+批写 panic 被 `catch_unwind` 恢复（loop 存活、receiver 不丢）；通道满 `try_send`
+非阻塞丢弃并计数。
+
+**durability 是 best-effort，MUST NOT 描述为可计费级精确**：通道满 / 重试耗尽 /
+panic 三类丢失点有进程内计数（`UsageMetrics::{dropped, write_failed,
+worker_restart}`）；进程被 kill 时队列内容不可观测地丢失。零丢失需要事务化
+outbox，不属本模块。优雅关机协议 = drop 全部 `AiUsageSink` clone 之后 await
+writer `JoinHandle`（通道关闭即排空退出）。
+
 ## Streaming STT（`speech_to_text` + `providers::dashscope`）
 
 面向**双向流 / 长连接**的实时识别（WebSocket / gRPC streaming），区别于
@@ -361,6 +394,26 @@ pub trait SpeechToText: Send + Sync {
 区域驻留：`DashScopeRegion::{Beijing, Singapore}` 决定 WebSocket endpoint，
 `validate_model_for_region(model, region)` 在建连前校验模型与地域匹配。
 
+## TTS / 声纹（`providers::{dashscope, minimax, volcengine}`）
+
+语音合成与声音复刻的独立 provider 面（不属 openai_compatible wire；与流式
+STT 一样恒可用，不受 `audio` feature gate——那只门控 openai_compatible 的
+`audio_generation` / `transcription` 模块）。三家各有协议方言，公共底座在
+`providers::speech`（`SseDataParser` SSE 解析、`AudioContainer` 容器判定、
+`SpeechError` 错误面——MiniMax T2A 流式音频块是 **hex** 编码、豆包是 base64，
+别按同一套解码写）。
+
+| Provider | 能力 | 协议要点 |
+| -------- | ---- | -------- |
+| `dashscope::QwenTts` | Qwen TTS 合成 | DashScope 凭证 + `DashScopeRegion`；`QwenTtsRequest::{with_model, with_language_type}` |
+| `dashscope::QwenVoiceEnrollment` | Qwen 声纹注册（说话人音色建档） | 凭证同上；`CreateVoiceRequest` / `EnrolledVoice` / `VoiceList` |
+| `minimax::MinimaxTts` | T2A V2 合成 + 声音复刻 | `POST /v1/t2a_v2?GroupId=…`（`stream=true` SSE，`data.audio` hex 块，末块 `extra_info`）；复刻两步：files/upload(purpose=voice_clone) → voice_clone（voice_id 调用方自定义）；**业务错误模式 = HTTP 200 + `base_resp.status_code != 0`**（1002 限流 / 1008 余额不足） |
+| `volcengine::DoubaoSpeech` | 豆包 V3 复刻 + 单向流式合成 | 单凭证 `X-Api-Key`；复刻 `POST /api/v3/tts/voice_clone`（base64 样本 + 调用方自定义 `custom_speaker_id`，试听走响应 `demo_audio`）；合成 `POST /api/v3/tts/unidirectional`（HTTP chunked **JSON 行流**，`data` base64，`code=20000000` 成功结束行）；复刻音色（ICL）须 `req_params.model` 显式指定 tts 系枚举 |
+
+错误面 `SpeechError` 与 STT 共用底座；构造形态统一 `new(credentials) →
+with_region/with_model/with_base_url` builder 链（`parse_dashscope_region`
+单点解析区域）。
+
 ## Errors
 
 ```rust
@@ -417,8 +470,9 @@ MUST NOT `#[derive(Debug)]`（`tracing::debug!(?config)` 会把明文密钥落�
 4. **Treat `WaitForInput` like a checkpoint.** The runner stops there and
    only `continue_with_input(...)` advances — your handler is what
    bridges the external prompt back into the flow.
-5. **Moonshot 端点必须显式 `chat_completions_model`**；Qwen 默认 Responses
-   （关思考 `reasoning.effort="none"`），DeepSeek 留 Chat Completions
+5. **模型工厂按形态选方法**：`completion_model` = Chat Completions（Moonshot
+   等 chat-only 端点直接可用）；Responses 面用 `responses_model`——Qwen 关思考
+   `reasoning.effort="none"`，DeepSeek 留 Chat Completions
    （`thinking:{type:disabled}`；Responses 形态无完全关闭档，fusion-ai-de-rig.md §P5b）。
 
 ## Code locations
@@ -428,7 +482,10 @@ MUST NOT `#[derive(Debug)]`（`tracing::debug!(?config)` 会把明文密钥落�
 - `crates/fusion-ai/tests/` — wiremock 行为基线 fixture（端点方言样例）
 - `crates/fusion-ai/src/llm/` — self-hosted chat provider trait + `LlmProviderConfig`
 - `crates/fusion-ai/src/llm/metered.rs` — `MeteredLlmProvider`, `AiUsageCtx/Event/Sink`
+- `crates/fusion-ai/src/llm/usage_batch.rs` — `spawn_usage_batch_writer`, `UsageMetrics`, `BatchSink`
 - `crates/fusion-ai/src/speech_to_text/mod.rs` — `SpeechToText` trait、`SttUplink`、`AudioStreamConfig`
 - `crates/fusion-ai/src/providers/dashscope/fun_asr.rs` — Fun-ASR 实时 STT 实装
+- `crates/fusion-ai/src/providers/{dashscope,minimax,volcengine}/` — TTS / 声纹注册（`qwen_tts.rs` / `voice_enrollment.rs` / `minimax/tts.rs` / `volcengine/speech.rs`）
+- `crates/fusion-ai/src/providers/speech/mod.rs` — 语音公共底座（`SseDataParser` / `AudioContainer` / `SpeechError`）
 - `crates/fusion-ai/src/graph_flow/{graph,runner,task,context,storage}.rs`
 - `crates/fusion-ai/src/error.rs` — `AiError`（收敛形态，§Errors）
