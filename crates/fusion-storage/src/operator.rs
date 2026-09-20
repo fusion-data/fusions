@@ -43,7 +43,17 @@ fn build_fs(config: &StorageConfig) -> Result<Operator, String> {
     "fs backend requires 'root' to be set: fusion-storage sets no default; inject it during config assembly".to_owned()
   })?;
   std::fs::create_dir_all(root).map_err(|e| format!("Failed to create fs storage root {root}: {e}"))?;
-  let builder = opendal::services::Fs::default().root(root);
+  // 两阶段原子写（tempfile + rename）。temp 目录 MUST 与 root 同文件系统（rename
+  // 跨设备失败），故固定派生 root 下隐藏子目录、不开配置面。直写形态在并发同 key
+  // 双写下会互截断（open truncate）：一方 close 期 fstat 读到对方截断后的长度触发
+  // CompleteLayer 长度核对失败（"writer got too much data"），已完整对象亦可被半写
+  // 撕裂；两阶段写下各 writer 独立 temp 文件（basename + 随机后缀），close rename
+  // 覆盖 = 「最后完整内容胜」，与云后端对象级原子覆盖语义对齐。append 写按 opendal
+  // 语义不走原子路径。
+  let atomic_dir = format!("{root}/.fusion-tmp");
+  std::fs::create_dir_all(&atomic_dir)
+    .map_err(|e| format!("Failed to create fs atomic write dir {atomic_dir}: {e}"))?;
+  let builder = opendal::services::Fs::default().root(root).atomic_write_dir(&atomic_dir);
   Operator::new(builder).map_err(|e| format!("Failed to create fs operator: {e}"))
 }
 
@@ -135,6 +145,36 @@ mod tests {
     let op = build_operator(&c).expect("fs operator");
     assert!(!op.info().capability().presign, "fs must not report native presign");
     assert!(std::path::Path::new(&root).is_dir(), "root directory is created");
+    let _ = std::fs::remove_dir_all(&root);
+  }
+
+  /// fs 并发同 key 双写隔离（两阶段写回归锚）：两个 writer 同时存活写同一 key，
+  /// 双方 close 均成功、终态为完整单份内容。直写形态下并发 open(truncate) 互截断：
+  /// 一方 close 期 fstat 读到对方截断后的 0 长度（CompleteLayer
+  /// "writer got too much data"），或把已完整对象撕裂为半写——两阶段写
+  /// （temp 随机后缀 + close rename）消除该窗口。
+  #[cfg(feature = "fs")]
+  #[tokio::test]
+  async fn fs_concurrent_same_key_writes_are_isolated() {
+    let root = temp_root("fs-atomic");
+    let mut c = StorageConfig::new("fs");
+    c.root = Some(root.clone());
+    let op = build_operator(&c).expect("fs operator");
+    let payload = vec![7u8; 540];
+
+    let run = |op: Operator, payload: Vec<u8>| {
+      tokio::spawn(async move {
+        let mut w = op.writer("house/same-key").await.expect("writer");
+        w.write(opendal::Buffer::from(payload)).await.expect("write");
+        w.close().await.expect("close must not see the other writer's truncate");
+      })
+    };
+    let (a, b) = (run(op.clone(), payload.clone()), run(op.clone(), payload.clone()));
+    a.await.expect("task a joined");
+    b.await.expect("task b joined");
+
+    let got = op.read("house/same-key").await.expect("read back");
+    assert_eq!(got.to_vec(), payload, "final object must be one full copy, never torn or truncated");
     let _ = std::fs::remove_dir_all(&root);
   }
 
