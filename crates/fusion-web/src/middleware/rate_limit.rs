@@ -85,6 +85,22 @@ impl RateLimiter {
     }
   }
 
+  /// Handler 侧显式 key 维度限流(无请求面 key 提取语义):仅供 `check(&key)`
+  /// 消费——key 由调用方在 handler 内按业务维度构造(如 `account:{id}`)。
+  ///
+  /// 不用于 `into_layer` 中间件形态(该形态下所有请求共享单一 fallback 桶,
+  /// 非预期用法);需要请求面自定义维度时用 `per_ip(..).with_key_extractor(..)`。
+  pub fn per_key(burst: u32, per_minute: u32) -> Self {
+    Self {
+      inner: Arc::new(RateLimiterInner {
+        buckets: Mutex::new(HashMap::new()),
+        capacity: burst as f64,
+        refill_per_sec: per_minute as f64 / 60.0,
+      }),
+      key_extractor: Arc::new(|_req| "handler-keyed".to_string()),
+    }
+  }
+
   /// 自定义 key 提取器(header / 路径 / 账号 id 等维度)。
   pub fn with_key_extractor(mut self, extractor: RateLimitKeyFn) -> Self {
     self.key_extractor = extractor;
@@ -234,6 +250,15 @@ mod tests {
     assert!(AsyncAuthorizeRequest::<Body>::authorize(&mut l, r).await.is_ok());
     let r2 = Request::builder().method("POST").uri("/x").body(Body::empty()).unwrap();
     assert!(AsyncAuthorizeRequest::<Body>::authorize(&mut l, r2).await.is_err());
+  }
+
+  #[tokio::test]
+  async fn per_key_buckets_by_explicit_handler_key() {
+    // handler 侧 check 显式 key 维度:不同 key 各自独立计数(per_key 构造器语义)
+    let limiter = RateLimiter::per_key(1, 60);
+    assert!(limiter.check("account:1"));
+    assert!(!limiter.check("account:1"));
+    assert!(limiter.check("account:2"), "different handler key unaffected");
   }
 
   #[tokio::test]
