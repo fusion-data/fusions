@@ -534,6 +534,7 @@ pub enum AudioMediaType {
   OGG,
   FLAC,
   M4A,
+  WEBM,
   PCM16,
   PCM24,
 }
