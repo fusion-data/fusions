@@ -174,6 +174,7 @@ struct SubmitResponse {
   #[serde(default)]
   output: SubmitOutput,
   #[serde(default)]
+  #[allow(dead_code)]
   request_id: Option<String>,
   #[serde(default)]
   code: Option<String>,
@@ -299,6 +300,11 @@ impl DashScopeImageGeneration {
     if let (Some(code), Some(message)) = (parsed.code, parsed.message) {
       // HTTP 200 + 业务错误码形态（InvalidApiKey 等）
       return Err(classify_business_error(&code, &message));
+    }
+    // 提交响应 task_status 恒 PENDING（异步径契约）——异常态视为协议错误
+    let status = parsed.output.task_status.unwrap_or_default();
+    if !status.is_empty() && status != "PENDING" {
+      return Err(DashScopeImageError::Protocol(format!("提交响应 task_status 非 PENDING：{status}")));
     }
     let task_id = parsed.output.task_id.filter(|id| !id.is_empty());
     match task_id {

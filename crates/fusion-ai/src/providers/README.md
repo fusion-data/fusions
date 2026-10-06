@@ -22,6 +22,10 @@ fixture 快照（`crates/fusion-ai/tests/`，wiremock）是行为基线：请求
 
 - DashScope Responses 要求 assistant 消息 `content` 字段必须存在（缺失 → 400）：本地
   `Message` 序列化保证 assistant content 恒序列化
+- DashScope **qwen-image 文生图走原生异步任务方言**（`dashscope::image_generation`：
+  提交 `X-DashScope-Async: enable` + 轮询 `/api/v1/tasks/{task_id}`）——同步长连接
+  不可靠（实测 50–110s/张），OpenAI 兼容径 `openai_compatible::image_generation` 非
+  该模型族推荐路由；方言样例 = `tests/dashscope_image_fixture.rs`
 - DeepSeek Responses 是无状态子集：不支持 `previous_response_id` / `store` / 图片输入，
   未知参数静默忽略——请求类型不暴露这些字段
 - DeepSeek 不支持空数组 `tools`（`tools: []` 会报错）：不传 tools 时请求体省略该字段
