@@ -18,13 +18,17 @@ image = []
 audio = []
 video = []
 docsrs = []
+# MCP 客户端栈门控（2026-10-06 实测判定：源码零引用的死重依赖——非 optional
+# 时拖入 aws-lc-sys/ring 整套 TLS 构建栈，下游消费方磁盘/编译成本失控；
+# 消费方按需开启，fusion-ai 自身零引用零行为差异）
+mcp = ["dep:rmcp"]
 
 [dependencies]
 fusion-common = { workspace = true, features = ["with-uuid"] }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
-rmcp = { workspace = true }
+rmcp = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
