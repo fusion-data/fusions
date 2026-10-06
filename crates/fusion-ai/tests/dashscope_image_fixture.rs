@@ -12,10 +12,13 @@
 //! 注：OpenAI 兼容径的 `b64_json` 既有样例见 `multimodal_fixture.rs`——
 //! **非 qwen-image 本批路由**（同步长连接不可靠，官方建议超时起步 600s）。
 use fusion_ai::providers::dashscope::image_generation::{
-  DashScopeImageGeneration, DashScopeImageRequest, DashScopeTaskStatus, DEFAULT_MODEL_QWEN_IMAGE,
+  DEFAULT_MODEL_QWEN_IMAGE, DashScopeImageGeneration, DashScopeImageRequest, DashScopeTaskStatus,
 };
 use serde_json::json;
-use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+use wiremock::{
+  Mock, MockServer, ResponseTemplate,
+  matchers::{method, path},
+};
 
 fn client(server: &MockServer) -> DashScopeImageGeneration {
   DashScopeImageGeneration::new("sk-test-dashscope").with_base_url(server.uri())
@@ -94,13 +97,15 @@ async fn check_status_should_walk_pending_running_succeeded() {
 #[tokio::test]
 async fn check_status_should_accept_text2image_results_form() {
   let server = MockServer::start().await;
-  Mock::given(method("GET")).and(path("/api/v1/tasks/task-t2i"))
+  Mock::given(method("GET"))
+    .and(path("/api/v1/tasks/task-t2i"))
     .respond_with(ResponseTemplate::new(200).set_body_json(json!({
       "output": { "task_id": "task-t2i", "task_status": "SUCCEEDED",
         "results": [{ "url": "https://oss.example/t2i.png" }] },
       "usage": { "image_count": 1 }
     })))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   let snapshot = client(&server).check_status("task-t2i").await.unwrap();
   assert_eq!(snapshot.status, DashScopeTaskStatus::Succeeded);
   assert_eq!(snapshot.image_url.as_deref(), Some("https://oss.example/t2i.png"));
@@ -114,7 +119,8 @@ async fn submit_should_classify_401_and_business_auth_error() {
     .respond_with(ResponseTemplate::new(401).set_body_json(json!({
       "code": "InvalidApiKey", "message": "Invalid API-key provided"
     })))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   let err = client(&server).submit(&DashScopeImageRequest::new("x")).await.unwrap_err();
   assert!(err.is_auth(), "401 应分类为鉴权失败：{err}");
 }
@@ -122,11 +128,13 @@ async fn submit_should_classify_401_and_business_auth_error() {
 #[tokio::test]
 async fn check_status_should_classify_business_error_payload() {
   let server = MockServer::start().await;
-  Mock::given(method("GET")).and(path("/api/v1/tasks/task-gone"))
+  Mock::given(method("GET"))
+    .and(path("/api/v1/tasks/task-gone"))
     .respond_with(ResponseTemplate::new(200).set_body_json(json!({
       "code": "InvalidApiKey", "message": "Invalid API-key provided", "request_id": "r"
     })))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   let err = client(&server).check_status("task-gone").await.unwrap_err();
   assert!(err.is_auth(), "InvalidApiKey 业务码应分类为鉴权失败：{err}");
 }
@@ -134,13 +142,15 @@ async fn check_status_should_classify_business_error_payload() {
 #[tokio::test]
 async fn check_status_should_surface_failed_terminal_with_code() {
   let server = MockServer::start().await;
-  Mock::given(method("GET")).and(path("/api/v1/tasks/task-bad"))
+  Mock::given(method("GET"))
+    .and(path("/api/v1/tasks/task-bad"))
     .respond_with(ResponseTemplate::new(200).set_body_json(json!({
       "output": { "task_id": "task-bad", "task_status": "FAILED" },
       "code": "InternalError", "message": "content filter rejected",
       "request_id": "r"
     })))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   let snapshot = client(&server).check_status("task-bad").await.unwrap();
   assert_eq!(snapshot.status, DashScopeTaskStatus::Failed);
   assert!(snapshot.status.is_terminal());
@@ -155,7 +165,8 @@ async fn submit_should_reject_payload_without_task_id() {
   Mock::given(method("POST"))
     .and(path("/api/v1/services/aigc/multimodal-generation/generation"))
     .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "request_id": "r" })))
-    .mount(&server).await;
+    .mount(&server)
+    .await;
   let err = client(&server).submit(&DashScopeImageRequest::new("x")).await.unwrap_err();
   assert!(err.to_string().contains("task_id"), "缺 task_id 应为协议错误：{err}");
 }

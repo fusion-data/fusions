@@ -19,8 +19,8 @@ pub mod voice_enrollment;
 pub use fun_asr::FunAsrRealtime;
 #[cfg(feature = "image")]
 pub use image_generation::{
-  DashScopeImageError, DashScopeImageGeneration, DashScopeImageRequest, DashScopeTaskSnapshot, DashScopeTaskStatus,
-  DEFAULT_MODEL_QWEN_IMAGE,
+  DEFAULT_MODEL_QWEN_IMAGE, DashScopeImageError, DashScopeImageGeneration, DashScopeImageRequest,
+  DashScopeTaskSnapshot, DashScopeTaskStatus,
 };
 pub use qwen_tts::{QwenTts, QwenTtsRequest};
 pub use voice_enrollment::{CreateVoiceRequest, EnrolledVoice, QwenVoiceEnrollment, VoiceList};

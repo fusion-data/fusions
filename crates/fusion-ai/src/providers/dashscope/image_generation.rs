@@ -290,7 +290,10 @@ impl DashScopeImageGeneration {
     let status = resp.status();
     let body: Value = resp.json().await.map_err(|e| DashScopeImageError::Protocol(format!("响应体非 JSON：{e}")))?;
     if status.as_u16() == 401 {
-      return Err(DashScopeImageError::Auth(format!("HTTP 401：{}", body.get("message").and_then(|v| v.as_str()).unwrap_or("鉴权失败"))));
+      return Err(DashScopeImageError::Auth(format!(
+        "HTTP 401：{}",
+        body.get("message").and_then(|v| v.as_str()).unwrap_or("鉴权失败")
+      )));
     }
     if !status.is_success() {
       return Err(classify_http_error(status.as_u16(), &body));
@@ -343,11 +346,13 @@ impl DashScopeImageGeneration {
     // 无 task_status 的业务错误载荷（任务不存在 / 鉴权失效等）= 查询失败；
     // 有 task_status 的 FAILED 终态 = 任务失败（快照承载，调用方收口）
     if raw_status.is_empty() {
-      let (code, message) = business_error.ok_or_else(|| DashScopeImageError::Protocol("任务响应缺 output.task_status".into()))?;
+      let (code, message) =
+        business_error.ok_or_else(|| DashScopeImageError::Protocol("任务响应缺 output.task_status".into()))?;
       return Err(classify_business_error(&code, &message));
     }
     let task_status = DashScopeTaskStatus::parse(&raw_status);
-    let mut snapshot = DashScopeTaskSnapshot { status: task_status, image_url: None, usage: parsed.usage, failure: None };
+    let mut snapshot =
+      DashScopeTaskSnapshot { status: task_status, image_url: None, usage: parsed.usage, failure: None };
     match task_status {
       DashScopeTaskStatus::Succeeded => {
         // 双形态兼容：multimodal（choices[].message.content[].image）优先，
@@ -364,8 +369,7 @@ impl DashScopeImageGeneration {
       }
       DashScopeTaskStatus::Failed => {
         snapshot.failure = Some(
-          business_error
-            .unwrap_or_else(|| ("InternalError".into(), "上游任务失败（载荷未携带 code/message）".into())),
+          business_error.unwrap_or_else(|| ("InternalError".into(), "上游任务失败（载荷未携带 code/message）".into())),
         );
       }
       _ => {}
