@@ -1,6 +1,6 @@
 ---
 status: active
-version: v1  # 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
+version: v3  # 2026-10-09 更正 §7 getTabBar 形态（v2 误诊「异步回调」→ 官方仅同步签名：成员调用保 this + 判空，开发者工具 lib 3.17.2 崩溃实证）；v2 2026-10-09 增补 §5 组件样式隔离 / content-box 盒模型 / flex 列文本换行（create 页实证）；v1 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
 ---
 
 # 栈适配层：微信小程序 Skyline + glass-easel
@@ -73,6 +73,9 @@ skyline WXSS 与 web CSS 的差异：
 - MUST NOT 用 `clip-path`、伪元素（`::before` / `::after`）——skyline 不支持。
 - CSS 变量 MUST 定义在 `page` 选择器。
 - **z-index 只在同层级节点间有效**（无 Web 标准层叠上下文）——浮层梯子（遮罩 / 弹层 / 固定底栏 / tabBar）MUST 设计为同级节点以 z-index 分层，跨层级嵌套的 z-index 声明无效。
+- **组件样式隔离**：glass-easel 默认 `styleIsolation: isolated`——app.wxss / 页面 wxss 的类选择器不作用于自定义组件内部节点，「组件 wxss 留空复用全局类」不成立，组件 MUST 自带其 wxml 用到的全部类（2026-10-09 实证：弹层组件裸文本沉底、无遮罩无卡片；开发者工具模拟器通道。样式匹配属框架确定性语义，非 §2 命中测试类真机差，但按本节惯例版本升级时复核）。CSS 自定义属性按树继承、不受隔离影响，组件内可消费 `page` 选择器定义的变量。
+- **盒模型默认 content-box**：`rendererOptions.skyline.defaultContentBox: true`（webview 对齐推荐档）下 `width` 百分比与 `padding` 并用的节点 MUST 显式 `box-sizing: border-box`——否则 `2×(50%−gap/2)+2×padding` 超宽，`flex-wrap` 网格逐卡换行退化为单列（2026-10-09 实证：模板卡网格，模拟器通道）。
+- **flex 列内文本不回绕**：`align-items: flex-start` 的 flex 列中 `<text>` 按 fit-content（最长行）排开、不换行、溢出容器——文本子节点 SHOULD 交给默认 stretch 拉满换行，需收窄的节点单独 `align-self: flex-start`（2026-10-09 实证：卡片描述溢出卡外，模拟器通道）。
 - 固定底栏（含 tabBar）MUST `calc(… + env(safe-area-inset-bottom))` 让位全面屏安全区，滚动容器以 `padding-bottom` 相应让位。
 
 ---
@@ -92,7 +95,7 @@ app.json `tabBar.custom: true` + 根目录 `custom-tab-bar/index` 组件（目�
 
 - **根节点 MUST `pointer-events: auto`**：宿主容器默认 `pointer-events: none` 且被子节点继承——缺省则整条栏渲染正常但命中测试全穿透（真点死钮；官方自定义 tabBar 文档 skyline 适配要求原文，2026-10-09 真机实证）。
 - **定位 MUST 自声明**：skyline 下框架不再代为固定底部（webview 才有框架代办的 fixed 包装容器），缺省渲染进页面流顶部；`fixed` / `absolute` 均可，安全区让位见 §5。
-- **`getTabBar` 为异步回调形式**（webview 为同步返回实例）：tab 页 onShow 高亮同步 MUST 传回调拿实例再 `setData`；官方 typings 仅声明同步签名——兼容双形态时调用处需「回调 + 同步返回值判空」并用类型断言收敛。
+- **`getTabBar` 官方仅有同步签名**（文档与 typings 一致，未区分渲染引擎）：返回当前页 tabBar 组件实例，未就绪 / 非 tab 页为 `undefined`——tab 页 onShow 高亮同步 MUST 成员调用 + 判空（`this.getTabBar()?.setData(...)`）。**MUST NOT 拆成裸函数调用**：`this` 丢失即被基础库实例守卫拒绝，抛 `Method should be called on a valid component instance`（2026-10-09 实证，开发者工具模拟器通道 lib 3.17.2；JS 调用语义属确定性类，非 §2 命中测试类真机差）。v2 曾登记「异步回调形式」，系误诊（回调形态官方从未提供），v3 作废更正。
 - 中央凸起钮（FAB）SHOULD 把 tap 目标绑在整段插槽而非仅视觉圆钮（扩大命中面）；负 margin 上移只改视觉，不改变命中域。
 
 ---
@@ -117,7 +120,7 @@ app.json `tabBar.custom: true` + 根目录 `custom-tab-bar/index` 组件（目�
 | 死按钮禁止 / 动作出口完备（frontend-conventions §9 原则） | 硬要求 | **不变** |
 | 事件与命中测试差异以真机为事实，模拟器通过不构成证据 | 硬要求 | **不变** |
 | 手写消费 wire MUST 对齐序列化 casing 与省略语义并以 fixture 校验 | 硬要求 | **不变** |
-| `bind:tap` + 冒泡守卫 + 导航节流 / tabBar 根节点 `pointer-events: auto` / 定位自声明 / `getTabBar` 异步回调 | 形态 | **替换**为目标平台事件派发与容器机制 |
+| `bind:tap` + 冒泡守卫 + 导航节流 / tabBar 根节点 `pointer-events: auto` / 定位自声明 / `getTabBar` 同步成员调用+判空 | 形态 | **替换**为目标平台事件派发与容器机制 |
 | 四件套 / scroll-view 局部滚动 / 禁 clip-path·伪元素 / `page` 选择器变量 / z-index 同层约束 / safe-area 让位 | 形态 | **替换**为目标渲染引擎等价物 |
 | 相对路径 import / miniprogram_npm 或手写镜像收口 | 形态 | **替换**为构建链下的正常模块解析（引入构建链时本组自然失效） |
 | `tsc --noEmit` + miniprogram-ci preview 测试通道 | 形态 | **替换**为目标平台静态检查与真机通道 |
