@@ -1,6 +1,6 @@
 # 技术栈适配层（stacks）
 
-> **Status**: active · **Version**: v2（2026-10-09 增 wechat-miniprogram-skyline；v1 2026-07-30）
+> **Status**: active · **Version**: v2（2026-10-09 增 wechat-miniprogram-skyline；§2 步骤 3 节号对齐改为锚点链接寻址，与三个移动端分栈实际体例一致；v1 2026-07-30）
 > **本层职责**：承载「换项目不变、换栈就变」的落地形态。规则本身在 [`../references/`](../references/sdd-overview.md)，项目取值在项目 overlay，本层只管**技术选型带来的差异**
 
 ## 0. Agent 执行协议
@@ -33,7 +33,7 @@
 
 1. **定位替换点**：在目标 references 分册中找出所有绑定默认基线栈的条款。判据是**换掉技术选型后这条还成立吗**——不成立的即替换点。
 2. **区分硬要求与形态**：多数条款是「要求」而非「实现」。例如「东西向 transport MUST 自愈」是协议无关的硬要求，「ConnectRPC over HTTP/2」才是形态。**硬要求 MUST 原样保留**，只替换形态。
-3. **复制骨架**：以 [`../templates/stack-adapter.md`](../templates/stack-adapter.md) 为骨架新建 `<stack-slug>.md`，节号与被适配分册的节号对齐。
+3. **复制骨架**：以 [`../templates/stack-adapter.md`](../templates/stack-adapter.md) 为骨架新建 `<stack-slug>.md`，章节按主题自组织、标题带「对应 [references §N](锚点)」链接定位（MUST NOT 依赖裸节号与分册配对）。
 4. **只写差异**：适配层 MUST NOT 复制 references 的条款正文，只写「本栈下这条落成什么」。
 5. **登记**：在本文 §1 表中追加一行；在被适配分册的头部「栈落地形态」处补链接。
 
