@@ -1,6 +1,6 @@
 # 技术栈适配层（stacks）
 
-> **Status**: active · **Version**: v1（2026-07-30）
+> **Status**: active · **Version**: v2（2026-10-09 增 wechat-miniprogram-skyline；v1 2026-07-30）
 > **本层职责**：承载「换项目不变、换栈就变」的落地形态。规则本身在 [`../references/`](../references/sdd-overview.md)，项目取值在项目 overlay，本层只管**技术选型带来的差异**
 
 ## 0. Agent 执行协议
@@ -21,6 +21,7 @@
 | [react-tanstack-antd.md](./react-tanstack-antd.md) | React 19 + TanStack Router/Query + Ant Design 6 + Vite | frontend-conventions（全册）· naming-conventions §10 · i18n-conventions §5 / §8 |
 | [react-native-ios.md](./react-native-ios.md) | React Native + Hermes + Metro + Xcode（iOS 壳） | frontend-conventions（全册）· SPECIFICATION §13.1 |
 | [harmonyos-arkts.md](./harmonyos-arkts.md) | HarmonyOS + ArkTS + hvigor + napi + DevEco Testing Hypium | frontend-conventions（全册）· SPECIFICATION §13.1 |
+| [wechat-miniprogram-skyline.md](./wechat-miniprogram-skyline.md) | 微信小程序原生（skyline 渲染 + glass-easel + TypeScript 无框架，开发者工具内置编译） | frontend-conventions（全册）· SPECIFICATION §13.1 |
 
 前三个是 `references/` 各分册的**默认基线栈**——分册中出现的具体类型、API 与协议名均来自它们。使用其它技术栈的项目 MUST 按 §2 建立自己的适配层。
 
