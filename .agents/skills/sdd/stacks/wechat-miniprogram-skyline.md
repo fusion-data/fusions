@@ -1,6 +1,6 @@
 ---
 status: active
-version: v3  # 2026-10-09 更正 §7 getTabBar 形态（v2 误诊「异步回调」→ 官方仅同步签名：成员调用保 this + 判空，开发者工具 lib 3.17.2 崩溃实证）；v2 2026-10-09 增补 §5 组件样式隔离 / content-box 盒模型 / flex 列文本换行（create 页实证）；v1 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
+version: v4  # 2026-10-09 增补 §6 守卫落点纪律（遮罩与出口按钮共享带守卫 handler → 按钮文案区死钮，收货地址弹窗实证）；v3 2026-10-09 更正 §7 getTabBar 形态（v2 误诊「异步回调」→ 官方仅同步签名：成员调用保 this + 判空，开发者工具 lib 3.17.2 崩溃实证）；v2 2026-10-09 增补 §5 组件样式隔离 / content-box 盒模型 / flex 列文本换行（create 页实证）；v1 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
 ---
 
 # 栈适配层：微信小程序 Skyline + glass-easel
@@ -84,7 +84,8 @@ skyline WXSS 与 web CSS 的差异：
 
 skyline + glass-easel 工具链的事件派发形态（[frontend-conventions §9.2](../references/frontend-conventions.md#92-动作反馈死按钮禁止) 死按钮原则的落地）：
 
-- tap 绑定一律 `bind:tap`；容器关闭 / 含内层动作的行 handler MUST 加冒泡守卫（`e.target !== e.currentTarget` 即 return）；导航类 handler 加 ~400ms 节流防双触发重复入栈。
+- tap 绑定一律 `bind:tap`；容器关闭 / 含内层动作的行 handler MUST 加冒泡守卫（`e.target !== e.currentTarget` 即 return），守卫 MUST 只落在容器 / 遮罩自己的 handler 上——动作出口按钮（叶子，子节点仅文案 text / 图标）MUST NOT 与遮罩共享带守卫的 handler；导航类 handler 加 ~400ms 节流防双触发重复入栈。
+- **实证登记（待复核）**：2026-10-09 遮罩与「取消」按钮共享同一带守卫 handler → 点在按钮文案 text 上 `target` 为该子节点（glass-easel 事件对象语义，源组件 = 命中的最内节点），守卫误判为内层动作即 return，按钮标签区零反馈死钮（收货地址弹窗真机报告；JS 事件对象语义属确定性类，非 §2 命中测试类真机差）——修复与形态 = 遮罩专用带守卫 handler + 按钮独立无守卫 handler（全仓同类 10 处已按此收敛）。
 - **实证登记（待复核）**：2026-10-09 工具链下组件内 `catch:tap` 不触发（自绘导航栏返回键真点死钮，改 `bind:tap` 即活；同日两例 tabBar 死钮曾误判为此，后改判 pointer-events 穿透，见 §7）——单例实证，基础库 / 工具升级时 MUST 复核，MAY 随版本修复转正或作废。
 
 ---
