@@ -4,14 +4,24 @@
 //! - [`fun_asr::FunAsrRealtime`] —— Fun-ASR 实时流式 STT(WebSocket)
 //! - [`qwen_tts::QwenTts`] —— Qwen-TTS 非实时合成(HTTP + SSE,PCM 流式)
 //! - [`voice_enrollment::QwenVoiceEnrollment`] —— Qwen-TTS 声音复刻(create/list/delete)
+//! - [`image_generation::DashScopeImageGeneration`] —— qwen-image 族异步任务
+//!   文生图(提交 + 轮询,`image` feature;OpenAI 兼容同步方言见
+//!   `openai_compatible::image_generation`——非 qwen-image 推荐路由)
 //!
 //! 未来按需扩展 CosyVoice、Qwen-Audio、Qwen-VL 等子能力。
 
 pub mod fun_asr;
+#[cfg(feature = "image")]
+pub mod image_generation;
 pub mod qwen_tts;
 pub mod voice_enrollment;
 
 pub use fun_asr::FunAsrRealtime;
+#[cfg(feature = "image")]
+pub use image_generation::{
+  DEFAULT_MODEL_QWEN_IMAGE, DashScopeImageError, DashScopeImageGeneration, DashScopeImageRequest,
+  DashScopeTaskSnapshot, DashScopeTaskStatus,
+};
 pub use qwen_tts::{QwenTts, QwenTtsRequest};
 pub use voice_enrollment::{CreateVoiceRequest, EnrolledVoice, QwenVoiceEnrollment, VoiceList};
 

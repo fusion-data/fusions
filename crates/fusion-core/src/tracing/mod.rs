@@ -4,7 +4,7 @@ mod utils;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-pub(crate) use init_tracing::*;
+pub use init_tracing::init_subscribers;
 #[cfg(feature = "with-tracing")]
 use init_tracing_opentelemetry::Guard;
 pub use utils::*;
