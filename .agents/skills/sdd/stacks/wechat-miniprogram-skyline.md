@@ -1,6 +1,6 @@
 ---
 status: active
-version: v4  # 2026-10-09 增补 §6 守卫落点纪律（遮罩与出口按钮共享带守卫 handler → 按钮文案区死钮，收货地址弹窗实证）；v3 2026-10-09 更正 §7 getTabBar 形态（v2 误诊「异步回调」→ 官方仅同步签名：成员调用保 this + 判空，开发者工具 lib 3.17.2 崩溃实证）；v2 2026-10-09 增补 §5 组件样式隔离 / content-box 盒模型 / flex 列文本换行（create 页实证）；v1 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
+version: v5  # 2026-10-10 增补 §10 WXML 编译域（表达式禁模板字符串 / 单文件 Fatal 毒化整包 / data-* 属性名禁大写 / 静态护栏形态）与 §11 工具链会话（模拟器 Origin=servicewechat.com 与后端 CSRF 白名单交互 / automator-skyline 元素查询受限 / scroll-view 滚轮待复核）；v4 2026-10-09 增补 §6 守卫落点纪律（遮罩与出口按钮共享带守卫 handler → 按钮文案区死钮，收货地址弹窗实证）；v3 2026-10-09 更正 §7 getTabBar 形态（v2 误诊「异步回调」→ 官方仅同步签名：成员调用保 this + 判空，开发者工具 lib 3.17.2 崩溃实证）；v2 2026-10-09 增补 §5 组件样式隔离 / content-box 盒模型 / flex 列文本换行（create 页实证）；v1 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
 ---
 
 # 栈适配层：微信小程序 Skyline + glass-easel
@@ -125,3 +125,24 @@ app.json `tabBar.custom: true` + 根目录 `custom-tab-bar/index` 组件（目�
 | 四件套 / scroll-view 局部滚动 / 禁 clip-path·伪元素 / `page` 选择器变量 / z-index 同层约束 / safe-area 让位 | 形态 | **替换**为目标渲染引擎等价物 |
 | 相对路径 import / miniprogram_npm 或手写镜像收口 | 形态 | **替换**为构建链下的正常模块解析（引入构建链时本组自然失效） |
 | `tsc --noEmit` + miniprogram-ci preview 测试通道 | 形态 | **替换**为目标平台静态检查与真机通道 |
+
+---
+
+## 10. WXML 编译域与表达式语法
+
+WXML 模板语法域（开发者工具整包编译；2026-10-10 实证，模拟器通道）：
+
+- `{{}}` 插值表达式只支持简单 JS 表达式（三元 / 逻辑 / 算术 / 字符串拼接）。**模板字符串（反引号 + `${}`）MUST NOT 用于 WXML 表达式**——编译期 Fatal `unexpected character inside expression`；带计数插值用拼接（`'已上传 ' + n + ' 份'`）。
+- **单文件编译 Fatal 毒化整包**：全部页面 wxml 编译为一个 bundle，任一文件 Fatal → 所有页面零渲染（当前页黑屏且完全无响应），报错文件与受害页面可以无关——排障 MUST 先看 Console 编译诊断，MUST NOT 只盯当前页面。编译 Note（如 `avoid uppercase letters`）不阻塞渲染（同场实证）。
+- **`data-*` 属性名 MUST 全小写**：dataset 键由连字符转驼峰（`data-v-idx` → `dataset.vIdx`），属性名中的大写字母被运行时静默转小写 → TS 侧按驼峰读取必然键错位，并触发编译 Note。
+- 静态护栏形态（本栈无构建链，tsc 不解析 wxml，此类语法错无静态通道）：对全部 `.wxml` grep 两模式——反引号、`data-` 属性名含大写字母——命中即 fail；命令与挂载点属项目 overlay。
+
+---
+
+## 11. 开发者工具会话与自动化通道
+
+工具链会话形态（对应 [SPECIFICATION §13.1](../references/SPECIFICATION.md#131-测试分层) 测试通道的落地面；2026-10-10 实证）：
+
+- **模拟器 wx.request MAY 携带 `Origin: https://servicewechat.com`**（微信运行时固有 origin；与会话形态相关——经 CLI 重建的项目窗口观察到，真机 wx.request 无浏览器 Origin 语义）。本地 / 同栈后端如有 CSRF Origin 校验或 CORS 显式白名单，MUST 评估放行该 origin，否则全部非 GET RPC 被 403（实证：后端日志 `csrf guard rejected` + 同请求带 / 不带该 origin 403 / 200 对照复现）。白名单取值登记属项目 overlay。
+- **miniprogram-automator 在 skyline 下元素查询受限**：仅页面顶层节点（scroll-view 之外）可查；scroll-view 内部与自定义组件内部节点不可见（实证 + 行业 skyline 适配记录一致）。可靠驱动面 = 导航（switchTab / navigateTo / redirect）+ `page.data()` 断言 + `page.callMethod` + 顶层元素；scroll-view 内交互 MUST 用像素点按或 callMethod 等价 handler 驱动，UI 弹层呈现另行截图 / 人工走查。
+- **实证登记（待复核）**：模拟器内 skyline scroll-view 对滚轮事件 MAY 不生效（多次滚轮零位移、拖拽手势可滚动且见回弹）——自动化滚动 MUST 验证像素确实变化后再认定到位。开发者工具 / 基础库升级时 MUST 复核，MAY 随版本修复转正或作废。
