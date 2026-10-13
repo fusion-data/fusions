@@ -153,6 +153,17 @@ treat `FailedToHashPassword` / `InvalidHashFormat` /
 three pwd variants map to `DataError::server_error`; rely on explicit
 matches, not the default conversion, when the distinction matters.
 
+**Out-of-process hash generation** (ops tooling / SQL-seeded accounts): the
+hard contract is the `#<version>#` prefix plus any PHC string
+`argon2::PasswordHash` can parse — argon2 parameters live in the PHC string
+itself, so a generator with different m/t/p still verifies. Pin the same
+argon2 crate version and assert the emitted PHC header
+(`$argon2id$v=19$m=19456,t=2,p=1$`, the crate defaults `generate_pwd` uses)
+anyway: it keeps hashes uniform and turns an algorithm/version change in
+`fusion-security` into a loud generator failure instead of login-time
+surprises. Mirror `is_strong_password` in the generator (reject before
+hashing), never after.
+
 ## OAuth2 (feature `oauth`)
 
 Built-in providers: **Gitee** (`OAuthProvider::gitee()`), **GitHub**

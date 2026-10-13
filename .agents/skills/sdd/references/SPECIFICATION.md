@@ -540,6 +540,7 @@ ReceiptEnvelope（最小）：
 - 交付前 MUST 至少执行与项目栈匹配的格式化、静态分析、类型检查（如适用）、测试与供应链检查（如适用）。
 - MUST 在 CI 中固化并可追溯质量门禁结果。
 - MUST NOT 用 AI Agent 自述替代 Verification Oracle 的证据；gate evidence MUST 来自命令输出、测试结果、生成产物一致性、审查记录或 approval 记录。
+- 验收 Oracle 的期望值 MUST 与可变状态解耦：MUST NOT 写死随业务数据演进而漂移的绝对值（行数 / 账号数 / 绑定取证日期），SHOULD 用判别式表达（`>= 1`、与对照查询的差分、布尔属性）——写死值在首次数据变更后即失效，自查者会把正常演进误判为回归。
 - docs：MUST 通过 [§1.0](#10-文档内容准入第一原则) 内容准入；SHOULD 保持链接可用、术语一致、无重复与无冲突，变更同步更新引用。
 - design：PR 描述 SHOULD 标注是否触发 [design-philosophy.md §12 十二种气味](./design-philosophy.md#12-十二种气味red-flags)（A-L）；连续 ≥3 项气味 MUST 回炉至 [§7 设计两次](./design-philosophy.md#7-设计两次design-it-twice)，不允许仅在实现层修补绕过。
 
