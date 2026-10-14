@@ -41,6 +41,7 @@ fusion-rpc = { version = "0.3.0", path = "crates/fusion-rpc" }
 fusion-ai = { version = "0.3.0", path = "crates/fusion-ai" }
 fusion-storage = { version = "0.3.0", path = "crates/fusion-storage" }
 fusion-weixin = { version = "0.3.0", path = "crates/fusion-weixin" }
+fusion-mail = { version = "0.3.0", path = "crates/fusion-mail" }
 fusions = { version = "0.3.0", path = "crates/fusions" }
 # -- projects end - fusion
 
@@ -287,8 +288,11 @@ tower-http = { version = "0.7", features = [
 tower-service = { version = "0.3" }
 tower-cookies = "0.11"
 cookie = "0.18"
-# -- Email SMTP（rustls backend, 与 sqlx 一致避免双 TLS 栈）
-lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
+# -- Email 基础模板（builder/hostname = Message 构造面；fusion-mail 直引此模板，
+#    smtp/tls/pool 等增量 feature 由其 feature 矩阵透传——TLS 栈纪律不变：rustls
+#    backend 与 sqlx 一致避免双 TLS 栈。注意 pool 是 lettre 的 default feature，
+#    模板 default-features=false 会将其关闭，smtp 透传集 MUST 显式含 lettre/pool）
+lettre = { version = "0.11", default-features = false, features = ["builder", "hostname"] }
 axum = { version = "0.8", features = [
   "macros",
   "form",

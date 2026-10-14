@@ -63,6 +63,9 @@ common-ai = ["fusion-common/with-ulid"]
 # 微信登录编排 (fusion-weixin)
 weixin = ["dep:fusion-weixin"]
 
+# 邮件发送 (fusion-mail)
+mail = ["dep:fusion-mail"]
+
 # ConnectRPC 支持
 rpc = ["dep:fusion-rpc", "dep:connectrpc"]
 
@@ -87,7 +90,7 @@ tracing = ["fusion-core/with-tracing"]
 # ==================== 便捷组合 ====================
 
 # 完整功能
-full = ["web", "db", "security", "ai", "rpc", "weixin"]
+full = ["web", "db", "security", "ai", "rpc", "weixin", "mail"]
 
 # Web API (不含 AI)
 api = ["web", "db", "security"]
@@ -118,6 +121,8 @@ fusion-rpc = { workspace = true, optional = true }
 connectrpc = { workspace = true, optional = true }
 # -- ai
 fusion-ai = { workspace = true, optional = true }
+# -- mail
+fusion-mail = { workspace = true, optional = true }
 # -- weixin
 fusion-weixin = { workspace = true, optional = true }
 # -- DataError 转换所需的运行期依赖（不再 feature gate）

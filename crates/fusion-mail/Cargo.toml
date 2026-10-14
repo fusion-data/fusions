@@ -1,0 +1,35 @@
+[package]
+name = "fusion-mail"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Fusion mail sending: SMTP (rustls) / file / recording transports over lettre"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# 基础（默认）：Message 构造面 + 记录 / 丢弃传输 + 异步 trait；file 传输零外联依赖。
+default = ["file", "tokio1"]
+# SMTP 传输：显式启用（rustls 栈——与 workspace 内 sqlx 单 TLS 栈纪律一致）。
+# pool = SMTP 连接池：lettre 的 default feature，workspace 模板 default-features=false
+# 会将其关闭，故在此显式补回（漏补 = 每次发送重建 TCP+TLS 连接）。
+smtp = ["lettre/smtp-transport", "lettre/tokio1-rustls-tls", "lettre/pool"]
+# 文件传输：MIME 全文落盘（本地走查 / 调试）。
+file = ["lettre/file-transport"]
+# DKIM 签名原语（lettre 内建；密钥装配与签名域归消费方）。
+dkim = ["lettre/dkim"]
+# 异步 trait 面（AsyncMailSender + 异步 SMTP 发送器）。
+tokio1 = ["lettre/tokio1", "dep:async-trait"]
+
+[dependencies]
+lettre = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -270,7 +270,7 @@ impl DashScopeImageGeneration {
   }
 
   fn auth_error(&self) -> DashScopeImageError {
-    DashScopeImageError::Auth(format!("Bearer 鉴权失败（api_key 缺失/失效）"))
+    DashScopeImageError::Auth("Bearer 鉴权失败（api_key 缺失/失效）".to_string())
   }
 
   /// 提交异步任务 → `task_id`（响应 task_status 恒 PENDING；非 PENDING 视为协议异常）。

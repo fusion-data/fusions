@@ -55,6 +55,10 @@ pub use fusion_security as security;
 /// 微信登录编排模块 (fusion-weixin)
 pub use fusion_weixin as weixin;
 
+#[cfg(feature = "mail")]
+/// 邮件发送模块 (fusion-mail)
+pub use fusion_mail as mail;
+
 #[cfg(feature = "web")]
 /// Web 框架模块 (fusion-web)
 pub use fusion_web as web;
