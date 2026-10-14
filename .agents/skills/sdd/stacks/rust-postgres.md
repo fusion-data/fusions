@@ -1,6 +1,6 @@
 ---
 status: active
-version: v2  # 2026-10-10 增补 §2 四条：动态拼接 SQL 逃过编译期校验的 DDL 漂移、事务内吞错 = 事务中毒、NOT NULL DEFAULT 禁显式 None 与枚举 CHECK 域绑定、RLS 下 FOR UPDATE 按行 UPDATE policy 判定（均为 UAT 首轮缺陷实证回流）；v1 2026-07-30
+last_updated: 2026-10-10
 ---
 
 # 栈适配层：Rust + PostgreSQL + sqlx

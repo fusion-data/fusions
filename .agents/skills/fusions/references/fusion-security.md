@@ -31,8 +31,7 @@ use fusions::security::{SecurityError, SecurityResult};
 use fusions::core::security::SecurityUtils;
 use fusions::core::configuration::SecuritySetting;
 
-// Password hashing lives in fusion-security (moved out of
-// fusion-core::security::pwd in v0.3 — fusion-core is JWT/HMAC-only now).
+// Password hashing lives in fusion-security — fusion-core is JWT/HMAC-only.
 use fusions::security::pwd::{generate_pwd, verify_pwd, is_strong_password};
 
 // OAuth (feature: with-oauth)
@@ -124,10 +123,8 @@ expires_in  = 3600
 
 Argon2 + random 16-byte salt, executed on `spawn_blocking`. The persisted
 format is `#<version>#<argon2-encoded-hash>` (current `version = 1`).
-Moved out of `fusion-core::security::pwd` in v0.3 — import from
-`fusions::security::pwd`; `fusion-core` no longer depends on argon2.
-The old `fusion_core::security::Error::InvalidFormat` variant was renamed
-to `SecurityError::InvalidHashFormat` in the move.
+Import from `fusions::security::pwd`; `fusion-core` does not depend on
+argon2. Hash-format failures surface as `SecurityError::InvalidHashFormat`.
 
 ```rust
 use fusions::security::pwd::{generate_pwd, verify_pwd, is_strong_password};

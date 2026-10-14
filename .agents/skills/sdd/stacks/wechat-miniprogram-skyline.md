@@ -1,6 +1,6 @@
 ---
 status: active
-version: v5  # 2026-10-10 增补 §10 WXML 编译域（表达式禁模板字符串 / 单文件 Fatal 毒化整包 / data-* 属性名禁大写 / 静态护栏形态）与 §11 工具链会话（模拟器 Origin=servicewechat.com 与后端 CSRF 白名单交互 / automator-skyline 元素查询受限 / scroll-view 滚轮待复核）；v4 2026-10-09 增补 §6 守卫落点纪律（遮罩与出口按钮共享带守卫 handler → 按钮文案区死钮，收货地址弹窗实证）；v3 2026-10-09 更正 §7 getTabBar 形态（v2 误诊「异步回调」→ 官方仅同步签名：成员调用保 this + 判空，开发者工具 lib 3.17.2 崩溃实证）；v2 2026-10-09 增补 §5 组件样式隔离 / content-box 盒模型 / flex 列文本换行（create 页实证）；v1 2026-10-09 首版（baoming 小程序 skyline 实证回流：四件套 / 渲染与样式差异 / tap 形态 / 自定义 tabBar / 零裸模块）
+last_updated: 2026-10-14
 ---
 
 # 栈适配层：微信小程序 Skyline + glass-easel
@@ -76,7 +76,7 @@ skyline WXSS 与 web CSS 的差异：
 - **组件样式隔离**：glass-easel 默认 `styleIsolation: isolated`——app.wxss / 页面 wxss 的类选择器不作用于自定义组件内部节点，「组件 wxss 留空复用全局类」不成立，组件 MUST 自带其 wxml 用到的全部类（2026-10-09 实证：弹层组件裸文本沉底、无遮罩无卡片；开发者工具模拟器通道。样式匹配属框架确定性语义，非 §2 命中测试类真机差，但按本节惯例版本升级时复核）。CSS 自定义属性按树继承、不受隔离影响，组件内可消费 `page` 选择器定义的变量。
 - **盒模型默认 content-box**：`rendererOptions.skyline.defaultContentBox: true`（webview 对齐推荐档）下 `width` 百分比与 `padding` 并用的节点 MUST 显式 `box-sizing: border-box`——否则 `2×(50%−gap/2)+2×padding` 超宽，`flex-wrap` 网格逐卡换行退化为单列（2026-10-09 实证：模板卡网格，模拟器通道）。
 - **flex 列内文本不回绕**：`align-items: flex-start` 的 flex 列中 `<text>` 按 fit-content（最长行）排开、不换行、溢出容器——文本子节点 SHOULD 交给默认 stretch 拉满换行，需收窄的节点单独 `align-self: flex-start`（2026-10-09 实证：卡片描述溢出卡外，模拟器通道）。
-- 固定底栏（含 tabBar）MUST `calc(… + env(safe-area-inset-bottom))` 让位全面屏安全区，滚动容器以 `padding-bottom` 相应让位。
+- 固定底栏（含 tabBar）MUST `calc(… + env(safe-area-inset-bottom))` 让位全面屏安全区：栏体**背景**延伸进安全区，可点内容让出。**吸底让位空间 MUST 放滚动内容尾部 spacer，MUST NOT 用 scroll-view 自身 `padding-bottom`**：skyline list 型 scroll-view 把自身 padding 当内容死区——子节点只在 content-box 内布局与绘制，可视底线 = 容器底边 − padding-bottom，与有无 fixed 底栏及其高度**零相关**，该 padding 整段表现为底栏上方恒定空白带（2026-10-14 实证：padding-bottom 78px+safe-area，内容恰截于容器底边 −112px 且底栏改高零响应；滚动内容尾 spacer 化后空白带消失；开发者工具模拟器通道，布局语义属确定性类非 §2 命中测试类真机差；修复经真机验收）。
 
 ---
 
@@ -86,7 +86,7 @@ skyline + glass-easel 工具链的事件派发形态（[frontend-conventions §9
 
 - tap 绑定一律 `bind:tap`；容器关闭 / 含内层动作的行 handler MUST 加冒泡守卫（`e.target !== e.currentTarget` 即 return），守卫 MUST 只落在容器 / 遮罩自己的 handler 上——动作出口按钮（叶子，子节点仅文案 text / 图标）MUST NOT 与遮罩共享带守卫的 handler；导航类 handler 加 ~400ms 节流防双触发重复入栈。
 - **实证登记（待复核）**：2026-10-09 遮罩与「取消」按钮共享同一带守卫 handler → 点在按钮文案 text 上 `target` 为该子节点（glass-easel 事件对象语义，源组件 = 命中的最内节点），守卫误判为内层动作即 return，按钮标签区零反馈死钮（收货地址弹窗真机报告；JS 事件对象语义属确定性类，非 §2 命中测试类真机差）——修复与形态 = 遮罩专用带守卫 handler + 按钮独立无守卫 handler（全仓同类 10 处已按此收敛）。
-- **实证登记（待复核）**：2026-10-09 工具链下组件内 `catch:tap` 不触发（自绘导航栏返回键真点死钮，改 `bind:tap` 即活；同日两例 tabBar 死钮曾误判为此，后改判 pointer-events 穿透，见 §7）——单例实证，基础库 / 工具升级时 MUST 复核，MAY 随版本修复转正或作废。
+- **实证登记（待复核）**：2026-10-09 工具链下组件内 `catch:tap` 不触发（自绘导航栏返回键真点死钮，改 `bind:tap` 即活）——单例实证，基础库 / 工具升级时 MUST 复核，MAY 随版本修复转正或作废。
 
 ---
 
@@ -96,7 +96,7 @@ app.json `tabBar.custom: true` + 根目录 `custom-tab-bar/index` 组件（目�
 
 - **根节点 MUST `pointer-events: auto`**：宿主容器默认 `pointer-events: none` 且被子节点继承——缺省则整条栏渲染正常但命中测试全穿透（真点死钮；官方自定义 tabBar 文档 skyline 适配要求原文，2026-10-09 真机实证）。
 - **定位 MUST 自声明**：skyline 下框架不再代为固定底部（webview 才有框架代办的 fixed 包装容器），缺省渲染进页面流顶部；`fixed` / `absolute` 均可，安全区让位见 §5。
-- **`getTabBar` 官方仅有同步签名**（文档与 typings 一致，未区分渲染引擎）：返回当前页 tabBar 组件实例，未就绪 / 非 tab 页为 `undefined`——tab 页 onShow 高亮同步 MUST 成员调用 + 判空（`this.getTabBar()?.setData(...)`）。**MUST NOT 拆成裸函数调用**：`this` 丢失即被基础库实例守卫拒绝，抛 `Method should be called on a valid component instance`（2026-10-09 实证，开发者工具模拟器通道 lib 3.17.2；JS 调用语义属确定性类，非 §2 命中测试类真机差）。v2 曾登记「异步回调形式」，系误诊（回调形态官方从未提供），v3 作废更正。
+- **`getTabBar` 官方仅有同步签名**（文档与 typings 一致，未区分渲染引擎）：返回当前页 tabBar 组件实例，未就绪 / 非 tab 页为 `undefined`——tab 页 onShow 高亮同步 MUST 成员调用 + 判空（`this.getTabBar()?.setData(...)`）。**MUST NOT 拆成裸函数调用**：`this` 丢失即被基础库实例守卫拒绝，抛 `Method should be called on a valid component instance`（2026-10-09 实证，开发者工具模拟器通道 lib 3.17.2；JS 调用语义属确定性类，非 §2 命中测试类真机差）。
 - 中央凸起钮（FAB）SHOULD 把 tap 目标绑在整段插槽而非仅视觉圆钮（扩大命中面）；负 margin 上移只改视觉，不改变命中域。
 
 ---
@@ -145,4 +145,5 @@ WXML 模板语法域（开发者工具整包编译；2026-10-10 实证，模拟�
 
 - **模拟器 wx.request MAY 携带 `Origin: https://servicewechat.com`**（微信运行时固有 origin；与会话形态相关——经 CLI 重建的项目窗口观察到，真机 wx.request 无浏览器 Origin 语义）。本地 / 同栈后端如有 CSRF Origin 校验或 CORS 显式白名单，MUST 评估放行该 origin，否则全部非 GET RPC 被 403（实证：后端日志 `csrf guard rejected` + 同请求带 / 不带该 origin 403 / 200 对照复现）。白名单取值登记属项目 overlay。
 - **miniprogram-automator 在 skyline 下元素查询受限**：仅页面顶层节点（scroll-view 之外）可查；scroll-view 内部与自定义组件内部节点不可见（实证 + 行业 skyline 适配记录一致）。可靠驱动面 = 导航（switchTab / navigateTo / redirect）+ `page.data()` 断言 + `page.callMethod` + 顶层元素；scroll-view 内交互 MUST 用像素点按或 callMethod 等价 handler 驱动，UI 弹层呈现另行截图 / 人工走查。
+- **布局取证通道（2026-10-14 实证）**：元素查询受限不覆盖几何取证——`miniProgram.evaluate` 内跑 appservice 侧 `wx.createSelectorQuery()`，页面级与 **scroll-view 内部节点**均可查（子节点数量 + boundingClientRect 正常返回）；`miniProgram.systemInfo()` 亦可用，且 custom tabBar 不缩减 `windowHeight`（= screenHeight，页面视口即全屏，吸底让位完全由页面自理，见 §5）。布局类排障 SHOULD 先经此通道取几何、再以截图像素测量对照（可视边界疑点 MAY 用临时背景色区分「内容截断」与「被覆盖」）；上条 automator `page.$` 受限面不受此影响，两者结论 MUST NOT 混用。
 - **实证登记（待复核）**：模拟器内 skyline scroll-view 对滚轮事件 MAY 不生效（多次滚轮零位移、拖拽手势可滚动且见回弹）——自动化滚动 MUST 验证像素确实变化后再认定到位。开发者工具 / 基础库升级时 MUST 复核，MAY 随版本修复转正或作废。

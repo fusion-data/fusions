@@ -1,6 +1,6 @@
 ---
 status: active
-version: v1  # <YYYY-MM-DD>
+last_updated: <YYYY-MM-DD>
 ---
 
 # 栈适配层：<技术栈名>

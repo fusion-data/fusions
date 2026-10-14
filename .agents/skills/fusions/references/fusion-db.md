@@ -235,7 +235,7 @@ pub async fn create_with_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, data
 3. **传递 typed context**: 每个请求或后台任务使用 `mm.with_ctx(ctx)` 设置当前 `AppContext`
 4. **事务优先闭包式**: 使用 `mm.transaction()` / `mm.read_transaction()` 自动管理提交/回滚，支持 SAVEPOINT 嵌套
 5. **手动事务守规则**: 需要手动事务时，严格遵守 [DbxPostgres 手动事务](#dbxpostgres-手动事务) 规则
-6. **作用域过滤**: v0.3 已无 `with_filter_interceptor`；owner / scope 过滤靠 `db_session_vars()` 注入的 RLS GUC，或 repo SQL 里的显式条件
+6. **作用域过滤**: 框架不提供 `with_filter_interceptor`；owner / scope 过滤靠 `db_session_vars()` 注入的 RLS GUC，或 repo SQL 里的显式条件
 7. **连接池**: 合理配置 `max_connections` 和 `idle_timeout`
 
 ## Examples from Codebase

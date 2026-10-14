@@ -1,6 +1,6 @@
 # 技术栈适配层（stacks）
 
-> **Status**: active · **Version**: v2（2026-10-09 增 wechat-miniprogram-skyline；§2 步骤 3 节号对齐改为锚点链接寻址，与三个移动端分栈实际体例一致；v1 2026-07-30）
+> **Status**: active · **LastUpdated**: 2026-10-09
 > **本层职责**：承载「换项目不变、换栈就变」的落地形态。规则本身在 [`../references/`](../references/sdd-overview.md)，项目取值在项目 overlay，本层只管**技术选型带来的差异**
 
 ## 0. Agent 执行协议

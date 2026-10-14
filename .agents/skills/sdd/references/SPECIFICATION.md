@@ -1,6 +1,6 @@
 ---
 status: active
-version: v2.5  # 2026-10-05（§1.0 禁入清单增「历史版本与讨论过程」——①②③ 类规格/设计正文只记现行事实结论，版本史与评审过程以 git 历史 + commit 指针为真相源；sdd-overview §3.4 审查清单同步）
+last_updated: 2026-10-14
 compliance: L1  # 默认
 ---
 
@@ -40,7 +40,7 @@ compliance: L1  # 默认
 - **复述代码逻辑**：函数体、算法步骤、可由读代码直接得到的控制流与数据结构。
 - **复述外部标准与官方文档**：协议规范、语言/库的通用用法、通用安装命令序列。MUST 改为链接到权威来源，只保留**本项目做出的选择**。
 - **复述已在别处正式定义的条款**：违反 SSOT（§13 docs 门禁）。MUST 改为相对链接；确需摘要时 MUST NOT 附带条款正文——「主题 → 链接」即可，带正文的摘要必然滞后于真相源。
-- **历史版本与讨论过程**（①②③ 类规格 / 设计文档，§4.1.1）：版本批次史（升版记录、changelog、增补批次链）与评审 / 决策讨论过程（决策表、建议采纳记录、建稿 / 迁移史注记）MUST NOT 进入规格正文——正文只记录现行事实结论；版本信息仅承载于文档控制字段（§4.1）与文首单行当前版本，历史以 git 历史与 commit 指针为真相源。上表「决策理由」准入项保留的是结论与防重提依据（如被否决的替代方案），MUST NOT 扩张为评审过程记录。
+- **历史版本与讨论过程**（①②③ 类规格 / 设计文档，§4.1.1）：版本批次史（升版记录、changelog、增补批次链、版本号字段）与评审 / 决策讨论过程（决策表、建议采纳记录、建稿 / 迁移史注记）MUST NOT 进入规格正文与文档控制字段——文档只承载现行事实结论，历史以 git 历史与 commit 指针为真相源。上表「决策理由」准入项保留的是结论与防重提依据（如被否决的替代方案），MUST NOT 扩张为评审过程记录。
 
 **豁免（即使可推断、即使读代码能得到，也 MUST 写明）**——判据是**推断错误的代价**，不是能否推断：
 
@@ -142,7 +142,7 @@ compliance: L1  # 默认
 规格文档结构：
 
 - 文档控制：Title、Status(draft|active|deprecated)、Owner、LastUpdated、Compliance(L0|L1|L2)
-  - 载体 = YAML front matter：承担控制字段义务的文档 MUST 以文件首行 `---` 围栏块承载控制字段，MUST NOT 以 blockquote 字段行（`> **Status**: ...`）承载（2026-08-23 收紧——双载体并存的实证教训 = 同一目录树跨批形式漂移、治理工具提取口径分裂）。front matter MUST 起于文件首行——非首行的围栏块不构成 front matter；键名 casing 同一文档集 SHOULD 统一（如 `status` / `last_updated` / `version`）；字段值的补充说明用 `#` 行内注释承载，MUST NOT 括号混入值；值含 `&` 等 YAML 特殊字符时 MUST 加引号。
+  - 载体 = YAML front matter：承担控制字段义务的文档 MUST 以文件首行 `---` 围栏块承载控制字段，MUST NOT 以 blockquote 字段行（`> **Status**: ...`）承载（双载体并存的实证教训 = 同一目录树跨批形式漂移、治理工具提取口径分裂）。front matter MUST 起于文件首行——非首行的围栏块不构成 front matter；键名 casing 同一文档集 SHOULD 统一（如 `status` / `last_updated`）；字段值的补充说明用 `#` 行内注释承载，MUST NOT 括号混入值；值含 `&` 等 YAML 特殊字符时 MUST 加引号。
   - 门面体裁例外：`README.md` 与 Agent 规则文件（`CLAUDE.md` / `AGENTS.md`）被渲染工具 / harness 直接消费，MUST NOT 承载 front matter；其中承担控制字段义务的目录索引 README（§4.1.1 ② 类）以 blockquote 字段行承载——blockquote 载体仅保留此域。
   - LastUpdated = 内容最后实质变更日；纯形式整理（载体迁移 / 重排版）SHOULD NOT 刷新。
 - 目标：Why、InScope、OutOfScope

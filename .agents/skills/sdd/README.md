@@ -72,7 +72,7 @@ SDD_SCAN_ROOTS='docs/designs,docs/specs' uv run scripts/check-spec-conformance.p
 | C2 | Agent 执行协议缺段（sdd-overview §3.3） |
 | C3 | BCP 14 关键词小写（"must" 不是规范性语言） |
 | C4 | `.overlay.md` 命名违规（sdd-overview §2.1） |
-| C5 | 规格文档头缺 Status / Version 控制字段（SPECIFICATION §4.1） |
+| C5 | 规格文档头缺 Status / LastUpdated 控制字段（SPECIFICATION §4.1） |
 
 **扫描面限定为规格体裁**（功能 / 系统规格、总纲索引词表、技术设计与架构裁决）；执行计划、运营跟踪、UAT 记录、对外文稿不纳入，避免假阳性。
 

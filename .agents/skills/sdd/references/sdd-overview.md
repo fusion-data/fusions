@@ -1,6 +1,6 @@
 ---
 status: active
-version: v3  # 2026-07-30
+last_updated: 2026-07-30
 ---
 
 # SDD 分册总览（Spec-Driven Development）

@@ -1,6 +1,6 @@
 ---
 status: active
-version: v3  # 2026-07-26
+last_updated: 2026-07-26
 ---
 
 # Spec-Driven Development（Sprint / Milestone 流程）

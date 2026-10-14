@@ -103,7 +103,7 @@ overlay MUST 命名为 `sdd.overlay.md` 并置于 **skill 安装目录同级**�
 uv run <path-to-this-skill>/scripts/check-spec-conformance.py
 ```
 
-检出五类机械违规：`path:line` 行号锚点、Agent 执行协议缺段、BCP 14 关键词小写、`.overlay.md` 命名违规、文档头缺 Status/Version。默认扫描本 skill 的 `references/` 与 `stacks/`；扩到项目文档：
+检出五类机械违规：`path:line` 行号锚点、Agent 执行协议缺段、BCP 14 关键词小写、`.overlay.md` 命名违规、文档头缺 Status/LastUpdated。默认扫描本 skill 的 `references/` 与 `stacks/`；扩到项目文档：
 
 ```bash
 SDD_SCAN_ROOTS='docs/designs,docs/specs' uv run <path-to-this-skill>/scripts/check-spec-conformance.py
