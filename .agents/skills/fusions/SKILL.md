@@ -110,6 +110,25 @@ Read these once; they trip people up because they diverge from default Rust / Ax
   a bare `BEGIN; …; COMMIT;` (no `set_config(...)`) — an RLS application
   MUST go through its own helper that layers the session vars on top
   (here: `hetu_core::db::with_read_txn` / `with_write_txn`).
+- **Never hold a transaction while acquiring a second pool connection.**
+  The recurring trap: one handler needs **two different RLS contexts**
+  (cross-domain reads under a permissive `login` context, then a write
+  under the caller's `participant` context) and opens the second tx
+  inside the first — at pool max, concurrent such requests each hold one
+  connection while waiting for another → convoy self-deadlock (all time
+  out; `idle in transaction` × pool max). Equally forbidden when the
+  second acquire hides inside **a helper that self-opens a short tx**
+  (audit record, tenant lookup, notify push); `tokio::spawn`-ed side
+  tasks are the only exemption (they don't block the parent — no cycle).
+  Two correct shapes, pick by context equivalence: (a) if the caller's
+  tx context satisfies the helper's query, use an **executor-form
+  helper** that takes the caller's connection (`&mut PgConnection`,
+  stays in the same tx — b022 read paths); (b) if the contexts genuinely
+  differ, use **sequential single-connection phases**: batch all reads
+  into ONE tx of the permissive context (JOIN / `EXISTS` in one query),
+  run heavy crypto (argon2, ~100ms) **outside** any tx, then open the
+  write tx (b027 `remove_email_credential`). Truth source (baoming
+  workspace): `docs/designs/db-pool-concurrency-discipline.md`.
 - **`DbxPostgres` manual transactions, never raw `sqlx::Transaction`.**
   Cross-module signatures take `dbx: &DbxPostgres`. `dbx.execute()` returns
   `u64` (rows affected) — `.rows_affected()` on it is a compile error.
@@ -169,7 +188,12 @@ Read these once; they trip people up because they diverge from default Rust / Ax
   no JWE decryption. Both modes keep the anti-forgery guarantees (returned
   header names stripped from the inbound request, unparseable values fail
   closed); the resolver error type is deliberately `()` — every failure
-  maps to the same 401, the resolver logs what it can distinguish.
+  maps to the same 401, the resolver logs what it can distinguish. In
+  opaque mode, persist only `sha256(token)` hex server-side (lookup and
+  revoke by hash — logout / change-password delete-by-hash); the plaintext
+  token lives only in the response body and memory, so a DB leak can't
+  become session forgery (repo precedents: `ops_tokens`, b027
+  `auth_tokens`).
 - **Outbound system-mode tokens are minted with `[fusion.security.pwd]`
   `secret_key`.** When a bin calls a sibling bin's RPC as a system
   principal (no user token), it mints a JWE via
