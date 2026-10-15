@@ -109,6 +109,7 @@ app.json `tabBar.custom: true` + 根目录 `custom-tab-bar/index` 组件（目�
 | 自定义 tabBar | `tabBar.custom: true` + `custom-tab-bar/index` 组件四件 | skyline 下整条栏点击穿透（§7 pointer-events 缺省形态） |
 | TypeScript 编译 | 开发者工具 `useCompilerPlugins` 含 `typescript` | `.ts` 不转译，直接报语法错 |
 | 真机预览通道 | miniprogram-ci + 正式 appid + 上传私钥 | 无法出预览二维码，真机 UAT 通道不可用 |
+| map 组件（轨迹渲染） | 基础库 map 组件（skyline 完全支持；polyline + marker + include-points） | **开发者工具暂不支持 map 调试（官方组件支持表明示）——渲染验证 MUST 真机预览，工具内渲染结果不构成证据**（2026-10-15 实证登记：b026 徒步路线块；polyline 点数无官方上限，超量卡顿为社区口径非官方——抽稀参数自测定档；`rendererOptions` 官方键清单不含 map 专项子键，写未知键被 lib 3.17.2 校验器拒） |
 
 ---
 
