@@ -18,7 +18,9 @@
 //!
 //! session_key 纪律：jscode2session 响应的 `session_key` 在 fusion-security 原语
 //! 层解析即弃——本 crate 任何结构 / 日志 / 错误面均不出现该字段（本面无微信加密
-//! 数据消费诉求；如有解密诉求须另立显式原语并重过隐私评审）。
+//! 数据消费诉求；如有解密诉求须另立显式原语并重过隐私评审）。**显式例外 =
+//! `werun`（g048-M1）与 `exchange_mp_with_session_key`（g040）**：携密原语面，
+//! 解密 / 签名即弃、不落库 / 不入日志 / 不入错误面。
 //!
 //! 明文纪律：secret / code 不落日志；错误日志仅打 channel 与错误类别。
 //! 携密纪律：`WeixinCredentials` 手写脱敏 Debug（secret 字段 `<REDACTED>`），
@@ -29,6 +31,7 @@
 //! XML·JSON 事件解析 / 应答构造）。
 
 pub mod push;
+pub mod werun;
 pub mod xpay;
 
 use std::fmt;
@@ -58,6 +61,11 @@ impl fmt::Debug for WeixinCredentials {
 impl WeixinCredentials {
   pub fn new(appid: String, secret: String) -> Self {
     Self { appid, secret }
+  }
+
+  /// appid 只读（crate 内消费面——werun 水印校验）。
+  pub(crate) fn appid_str(&self) -> &str {
+    &self.appid
   }
 
   /// 全空（未启用）或全配（可用）才合法；半配由消费方启动期断言拒。
@@ -170,6 +178,12 @@ impl WeixinLoginClient {
   /// 小程序面凭据齐备性。
   pub fn is_configured_mp(&self) -> bool {
     self.mp.as_ref().is_some_and(|c| c.is_configured())
+  }
+
+  /// 小程序 appid（werun 水印校验锚——crate 内消费面；公开只读为 g048 解密
+  /// 原语闭合所需，appid 本身是前端可见的公开标识非密钥）。
+  pub(crate) fn mp_appid_or_empty(&self) -> &str {
+    self.mp.as_ref().map(|c| c.appid_str()).unwrap_or("")
   }
 
   /// 授权码换身份（unionid 锚定）。未配置通道 → `Unavailable`（入口自检——防空
