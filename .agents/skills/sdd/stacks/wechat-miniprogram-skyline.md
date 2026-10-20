@@ -77,6 +77,7 @@ skyline WXSS 与 web CSS 的差异：
 - **盒模型默认 content-box**：`rendererOptions.skyline.defaultContentBox: true`（webview 对齐推荐档）下 `width` 百分比与 `padding` 并用的节点 MUST 显式 `box-sizing: border-box`——否则 `2×(50%−gap/2)+2×padding` 超宽，`flex-wrap` 网格逐卡换行退化为单列（2026-10-09 实证：模板卡网格，模拟器通道）。
 - **flex 列内文本不回绕**：`align-items: flex-start` 的 flex 列中 `<text>` 按 fit-content（最长行）排开、不换行、溢出容器——文本子节点 SHOULD 交给默认 stretch 拉满换行，需收窄的节点单独 `align-self: flex-start`（2026-10-09 实证：卡片描述溢出卡外，模拟器通道）。
 - 固定底栏（含 tabBar）MUST `calc(… + env(safe-area-inset-bottom))` 让位全面屏安全区：栏体**背景**延伸进安全区，可点内容让出。**吸底让位空间 MUST 放滚动内容尾部 spacer，MUST NOT 用 scroll-view 自身 `padding-bottom`**：skyline list 型 scroll-view 把自身 padding 当内容死区——子节点只在 content-box 内布局与绘制，可视底线 = 容器底边 − padding-bottom，与有无 fixed 底栏及其高度**零相关**，该 padding 整段表现为底栏上方恒定空白带（2026-10-14 实证：padding-bottom 78px+safe-area，内容恰截于容器底边 −112px 且底栏改高零响应；滚动内容尾 spacer 化后空白带消失；开发者工具模拟器通道，布局语义属确定性类非 §2 命中测试类真机差；修复经真机验收）。
+- **行内分隔线 MUST NOT 用绝对定位节点**：list 型 scroll-view 内，行数据异步 setData 触发重排时，行内 `position:absolute`（left+right+bottom 三边约束）的分隔线节点会被错位重排——横向按页面根容器解析（穿出卡片边界直至屏幕边），纵向落 flex 静态位（行垂直中心），并与原位分隔线**并存为多出的一条杂线**（2026-10-20 真机实证：设置组行值文本 `''`→异步回填后出现；取证判别口径 = 杂线横向跨度呈页面根容器几何、纵向恰为行文本块垂直中心、色值不匹配分隔线 token、条数比 wxml 分隔线节点数多一——区别于「分隔线整体错位」型）。官方兼容文档「Skyline 下 absolute 相对坐标不准」类。修复形态 = 分隔线改**行间流内元素**（无任何定位属性，侧向 inset 用 margin-left 表达），改全局形态时 MUST 先全仓盘点用位（行内 / 组内兄弟两类）逐一迁移——flex 行内的流内节点会横向占位，行内用位 MUST NOT 原地留置；流内元素结构上不可能脱离行间位置，是唯一对该错位类免疫的分隔线形态。
 
 ---
 
