@@ -70,7 +70,8 @@ last_updated: 2026-10-14
 
 skyline WXSS 与 web CSS 的差异：
 
-- MUST NOT 用 `clip-path`、伪元素（`::before` / `::after`）——skyline 不支持。
+- MUST NOT 用 `clip-path`——skyline 不支持。
+- **伪元素条款修订（2026-10-26）**：原「skyline 不支持伪元素」前提作废——官方 WXSS 文档选择器表现列伪元素 `::before {}` / `::after {}` 为 ✓（且仅此两个；2026-08-25 文档错误修正）。装饰性视觉维持实体 view 判例不入伪元素；但**组件默认样式的伪元素复位允许且必要时必须**——`button` 默认边框（含圆角）画在 `::after` 且 border / border-radius 简写「支持解析但以展开属性为准」（官方属性表注），本体简写清零压不过组件默认展开属性，复位 MUST 展开长属性 + `::after` 边框清零双管（2026-10-26 真机取证：chooseAvatar 头像按钮灰框 = 精确按钮盒圆角发丝线，像素测量与按钮盒 84×84 重合；profile `.head-avatar-btn` 判例，全仓 8 处原生 button 同批收敛）。伪元素用位属真机差类，新增 MUST 真机复核。
 - CSS 变量 MUST 定义在 `page` 选择器。
 - **z-index 只在同层级节点间有效**（无 Web 标准层叠上下文）——浮层梯子（遮罩 / 弹层 / 固定底栏 / tabBar）MUST 设计为同级节点以 z-index 分层，跨层级嵌套的 z-index 声明无效。
 - **组件样式隔离**：glass-easel 默认 `styleIsolation: isolated`——app.wxss / 页面 wxss 的类选择器不作用于自定义组件内部节点，「组件 wxss 留空复用全局类」不成立，组件 MUST 自带其 wxml 用到的全部类（2026-10-09 实证：弹层组件裸文本沉底、无遮罩无卡片；开发者工具模拟器通道。样式匹配属框架确定性语义，非 §2 命中测试类真机差，但按本节惯例版本升级时复核）。CSS 自定义属性按树继承、不受隔离影响，组件内可消费 `page` 选择器定义的变量。
@@ -110,6 +111,7 @@ app.json `tabBar.custom: true` + 根目录 `custom-tab-bar/index` 组件（目�
 | 自定义 tabBar | `tabBar.custom: true` + `custom-tab-bar/index` 组件四件 | skyline 下整条栏点击穿透（§7 pointer-events 缺省形态） |
 | TypeScript 编译 | 开发者工具 `useCompilerPlugins` 含 `typescript` | `.ts` 不转译，直接报语法错 |
 | 真机预览通道 | miniprogram-ci + 正式 appid + 上传私钥 | 无法出预览二维码，真机 UAT 通道不可用 |
+| 朋友圈单页模式 × skyline（b055 实证 2026-10-26） | 官方分享指引 + `singlePage.navigationBarFit`（基础库 ≥2.11.3）；skyline 兼容性无明示条款，但基础库 **v2.28.1（2022-12-05）发布日志**有「修复 框架 skyline 组件补全单页模式相关逻辑」——skyline 组件对单页模式有专门框架级处理（受支持组合的证据） | **开发者工具编译模式无法复现单页容器**（官方「特殊场景调试」文档不含 1154；编译模式场景值只改 `getLaunchOptionsSync().scene` 返回值）——单页容器渲染 MUST 真机朋友圈实链取证，模拟器通过不构成证据 |
 | map 组件（轨迹渲染） | 基础库 map 组件（skyline 完全支持；polyline + marker + include-points） | **开发者工具暂不支持 map 调试（官方组件支持表明示）——渲染验证 MUST 真机预览，工具内渲染结果不构成证据**（2026-10-15 实证登记：b026 徒步路线块；polyline 点数无官方上限，超量卡顿为社区口径非官方——抽稀参数自测定档；`rendererOptions` 官方键清单不含 map 专项子键，写未知键被 lib 3.17.2 校验器拒） |
 
 ---
