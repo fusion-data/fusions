@@ -2,6 +2,8 @@ target/
 Cargo.lock
 *.rs.bk
 .DS_Store
+__pycache__/
 
 # Local runtime configs copied from examples.
 **/resources/app.toml
+
